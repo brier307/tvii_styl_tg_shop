@@ -24,18 +24,6 @@ class User(Base):
     address = mapped_column(String(100))
 
 
-class Order(Base):
-    __tablename__ = 'orders'
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    tg_id = mapped_column(BigInteger)
-    article = mapped_column(String(100))
-    order_date = mapped_column(String(20))
-    payment_method = mapped_column(String(20))
-    phone = mapped_column(String(20))
-    address = mapped_column(String(100))
-
-
 async def async_main():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

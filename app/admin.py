@@ -2,12 +2,13 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Filter, CommandStart, Command
 
+from config import ADMIN
 admin = Router()
 
 
 class Admin(Filter):
     def __init__(self):
-        self.admins = [123, 456]
+        self.admins = ADMIN
 
     async def __call__(self, message: Message):
         return message.from_user.id in self.admins
