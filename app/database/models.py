@@ -1,0 +1,41 @@
+from sqlalchemy import ForeignKey, String, BigInteger
+from sqlalchemy.orm import Mapped, mapped_column, DeclarativeBase, relationship
+from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
+
+from config import DB_URL
+
+engine = create_async_engine(url=DB_URL,
+                             echo=True)
+    
+async_session = async_sessionmaker(engine)
+
+
+class Base(AsyncAttrs, DeclarativeBase):
+    pass
+
+
+class User(Base):
+    __tablename__ = 'users'
+    
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tg_id = mapped_column(BigInteger)
+    name = mapped_column(String(100))
+    phone = mapped_column(String(20))
+    address = mapped_column(String(100))
+
+
+class Order(Base):
+    __tablename__ = 'orders'
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tg_id = mapped_column(BigInteger)
+    article = mapped_column(String(100))
+    order_date = mapped_column(String(20))
+    payment_method = mapped_column(String(20))
+    phone = mapped_column(String(20))
+    address = mapped_column(String(100))
+
+
+async def async_main():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
