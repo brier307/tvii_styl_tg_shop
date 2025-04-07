@@ -77,7 +77,6 @@ async def format_cart_content(user_cart: dict, user_id: int) -> str:
             f"Кількість: {item['quantity']} шт.\n"
             f"Ціна: {item['price']:.2f} грн. x {item['quantity']} = {item['total']:.2f} грн.\n"
             f"Доступно: {item['available']} шт.\n\n"
-            f"Для видалення натисніть кнопку під товаром 👇\n"
             "➖➖➖➖➖➖➖➖➖➖\n\n"
         )
 

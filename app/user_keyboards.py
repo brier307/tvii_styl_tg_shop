@@ -55,12 +55,7 @@ def get_catalog_keyboard() -> InlineKeyboardMarkup:
 
 
 def get_cart_keyboard(has_items: bool = True) -> InlineKeyboardMarkup:
-    """
-    Создает клавиатуру для корзины
-
-    Args:
-        has_items (bool): Есть ли товары в корзине
-    """
+    """Создает клавиатуру для корзины"""
     builder = InlineKeyboardBuilder()
 
     if has_items:
@@ -68,6 +63,14 @@ def get_cart_keyboard(has_items: bool = True) -> InlineKeyboardMarkup:
         builder.button(
             text="💳 Оформити замовлення",
             callback_data="checkout"
+        )
+        builder.button(
+            text="📝 Змінити кількість",
+            callback_data="change_quantities"
+        )
+        builder.button(
+            text="✂️ Видалити товари",
+            callback_data="delete_items"
         )
         builder.button(
             text="🗑 Очистити кошик",
@@ -162,46 +165,6 @@ def get_support_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_cart_keyboard(has_items: bool = True) -> InlineKeyboardMarkup:
-    """
-    Создает клавиатуру для корзины
-
-    Args:
-        has_items (bool): Есть ли товары в корзине
-    """
-    builder = InlineKeyboardBuilder()
-
-    if has_items:
-        # Кнопки управления корзиной
-        builder.button(
-            text="💳 Оформити замовлення",
-            callback_data="checkout"
-        )
-        builder.button(
-            text="✂️ Видалити товари",
-            callback_data="delete_items"
-        )
-        builder.button(
-            text="🗑 Очистити кошик",
-            callback_data="clear_cart"
-        )
-
-    # Навигационные кнопки
-    builder.button(
-        text="📋 Перейти до каталогу",
-        callback_data="show_catalog"
-    )
-    builder.button(
-        text="🏠 Головне меню",
-        callback_data="back_to_main"
-    )
-
-    # Располагаем кнопки по одной в ряд
-    builder.adjust(1)
-
-    return builder.as_markup()
-
-
 def get_delete_items_keyboard(items: List[Tuple[str, str]]) -> InlineKeyboardMarkup:
     """
     Создает клавиатуру для удаления отдельных товаров
@@ -242,3 +205,53 @@ def get_back_to_cart_keyboard() -> InlineKeyboardMarkup:
     )
 
     return builder.as_markup()
+
+
+def get_quantity_change_keyboard(items_info: List[dict]) -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру для изменения количества товаров
+
+    Args:
+        items_info: Список словарей с информацией о товарах
+    """
+    keyboard = []  # Список строк с кнопками
+
+    for item in items_info:
+        # Строка с названием товара
+        name_row = [
+            InlineKeyboardButton(
+                text=f"📦 {item['name'][:30]}...",
+                callback_data=f"qinfo_{item['article']}"
+            )
+        ]
+
+        # Строка с кнопками управления количеством
+        quantity_row = [
+            InlineKeyboardButton(
+                text="➖",
+                callback_data=f"qty_decrease_{item['article']}"  # Изменен callback_data
+            ),
+            InlineKeyboardButton(
+                text=f"{item['quantity']}/{item['available']}",
+                callback_data="quantity_info"
+            ),
+            InlineKeyboardButton(
+                text="➕",
+                callback_data=f"qty_increase_{item['article']}"  # Изменен callback_data
+            )
+        ]
+
+        # Добавляем строки в клавиатуру
+        keyboard.append(name_row)
+        keyboard.append(quantity_row)
+
+    # Добавляем кнопку возврата в конец
+    back_row = [
+        InlineKeyboardButton(
+            text="🔙 Назад до кошика",
+            callback_data="back_to_cart"
+        )
+    ]
+    keyboard.append(back_row)
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
