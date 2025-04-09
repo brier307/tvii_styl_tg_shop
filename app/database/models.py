@@ -66,6 +66,7 @@ class Order(Base):
     phone: Mapped[str] = mapped_column(String(13), nullable=False)  # +380998235272 (13 символів)
     delivery: Mapped[str] = mapped_column(String(50), nullable=False)
     address: Mapped[str] = mapped_column(Text, nullable=False)
+    payment_method: Mapped[str] = mapped_column(String(50), nullable=False)
     date: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
     status: Mapped[str] = mapped_column(
         String(20),
