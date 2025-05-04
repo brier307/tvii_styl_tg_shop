@@ -1,6 +1,6 @@
 from app.cart import *
 
-product_manager = ProductManager("Stock.xls")
+product_manager = ProductManager("Залишки номенклатури.xlsx")
 
 user = Router()
 cart = RedisCart()

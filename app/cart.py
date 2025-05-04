@@ -13,7 +13,7 @@ from app.database.redis_cart import RedisCart
 from app.database.products import ProductManager
 
 
-product_manager = ProductManager("Stock.xls")
+product_manager = ProductManager("Залишки номенклатури.xlsx")
 
 user = Router()
 cart = RedisCart()

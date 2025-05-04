@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 class ProductManager:
-    def __init__(self, file_path: str = "Stock.xls"):
+    def __init__(self, file_path: str = "Залишки номенклатури.xlsx"):
         """
         Инициализация менеджера продуктов
 
@@ -18,21 +18,28 @@ class ProductManager:
     def _load_data(self) -> None:
         """Загрузка данных из Excel файла"""
         try:
-            # Загружаем файл, начиная с 7-й строки (skiprows=6)
+            # Загружаем файл, начиная со второй строки (header=1)
             self.df = pd.read_excel(
                 self.file_path,
-                skiprows=6,  # Пропускаем первые 6 строк
+                header=1,  # Заголовки находятся во второй строке
                 usecols=[
                     "Номенклатура",
-                    "Артикул ",  # Оставляем пробел, как в оригинале
-                    "Кількість",
-                    "У вибраному типі цін (USD)"
+                    "Артикул",
+                    "Кількість\n(залишок)",
+                    "Ціна"
                 ]
             )
+
             # Очищаем данные
-            self.df = self.df.dropna(subset=["Артикул "])
-            # Очищаем пробелы в артикулах
-            self.df["Артикул "] = self.df["Артикул "].str.strip()
+            self.df = self.df.dropna(subset=["Номенклатура"])
+            # Очищаем пробелы в артикулах, если они есть
+            self.df["Артикул"] = self.df["Артикул"].astype(str).str.strip()
+            # Заменяем 'nan' на пустую строку для артикулов
+            self.df.loc[self.df["Артикул"] == 'nan', "Артикул"] = ''
+
+            # Преобразуем числовые колонки
+            self.df["Кількість\n(залишок)"] = pd.to_numeric(self.df["Кількість\n(залишок)"], errors='coerce').fillna(0)
+            self.df["Ціна"] = pd.to_numeric(self.df["Ціна"], errors='coerce').fillna(0)
 
         except Exception as e:
             print(f"Ошибка при загрузке файла: {e}")
@@ -49,15 +56,18 @@ class ProductManager:
             Optional[Tuple[str, float, int]]: кортеж (название, цена, количество) или None, если товар не найден
         """
         try:
+            if not article or article.strip() == '':
+                return None
+
             # Поиск товара по артикулу
-            product = self.df[self.df["Артикул "] == article]
+            product = self.df[self.df["Артикул"] == article.strip()]
 
             if product.empty:
                 return None
 
             name = product["Номенклатура"].iloc[0]
-            price = float(product["У вибраному типі цін (USD)"].iloc[0])
-            quantity = int(product["Кількість"].iloc[0])
+            price = float(product["Ціна"].iloc[0])
+            quantity = int(product["Кількість\n(залишок)"].iloc[0])
 
             return (name, price, quantity)
 
