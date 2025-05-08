@@ -3,6 +3,7 @@ from app.user_order import OrderManager
 from app.database.requests import set_user
 from app.cart import RedisCart
 from app.database.products import ProductManager
+from app.user_order import process_show_orders, process_orders_pagination
 import logging
 
 product_manager = ProductManager("Залишки номенклатури.xlsx")
@@ -81,14 +82,6 @@ async def process_show_catalog(callback: CallbackQuery):
     await callback.message.edit_text(
         "🗂 Каталог товарів\n\nОберіть категорію:",
         reply_markup=get_catalog_keyboard()
-    )
-
-
-@user.callback_query(F.data == "show_orders")
-async def process_show_orders(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "📦 Ваші замовлення\n\nЗавантаження...",
-        reply_markup=get_back_to_main_menu()
     )
 
 
@@ -854,3 +847,15 @@ async def show_quantity_info(callback: CallbackQuery):
         "Поточна кількість / Доступно на складі",
         show_alert=True
     )
+
+
+# Обработчик для отображения заказов
+@user.callback_query(F.data == "show_orders")
+async def handle_show_orders(callback: CallbackQuery):
+    await process_show_orders(callback)
+
+
+# Обработчик для навигации по страницам заказов
+@user.callback_query(F.data.startswith("orders_page:"))
+async def handle_orders_pagination(callback: CallbackQuery):
+    await process_orders_pagination(callback)

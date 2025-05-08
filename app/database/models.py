@@ -20,21 +20,21 @@ class Base(AsyncAttrs, DeclarativeBase):
 
 class OrderStatus(enum.Enum):
     NEW = "new"
-    PROCESSING = "processing"
     CONFIRMED = "confirmed"
     SHIPPED = "shipped"
     DELIVERED = "delivered"
-    CANCELLED = "cancelled"
+    CANCELLED_BY_ADMIN = "cancelled_by_admin"
+    CANCELLED_BY_USER = "cancelled_by_user"
 
     def get_uk_description(self) -> str:
         """Повертає опис статусу українською"""
         descriptions = {
-            self.NEW: "Нове замовлення",
-            self.PROCESSING: "В обробці",
+            self.NEW: "В обробці",
             self.CONFIRMED: "Підтверджено",
             self.SHIPPED: "Відправлено",
             self.DELIVERED: "Доставлено",
-            self.CANCELLED: "Скасовано"
+            self.CANCELLED_BY_ADMIN: "Скасовано адміністратором",
+            self.CANCELLED_BY_USER: "Скасовано користувачем",
         }
         return descriptions[self]
 

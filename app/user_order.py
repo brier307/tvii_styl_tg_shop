@@ -2,6 +2,7 @@ import logging
 import datetime
 import re
 
+from math import ceil
 from aiogram import Router, F
 from aiogram.filters.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -14,9 +15,14 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from typing import Optional
 
 from app.database.models import DeliveryMethod
-from app.database.requests import create_order
+from app.database.requests import create_order, get_user_orders
 from app.database.redis_cart import RedisCart
 from app.database.products import ProductManager
+from aiogram.filters.state import State, StatesGroup
+from app.user_keyboards import get_orders_keyboard, get_back_to_main_menu
+
+
+ORDERS_PER_PAGE = 5  # Количество заказов на одной странице
 
 
 # Настройка логгера
@@ -619,3 +625,52 @@ class OrderManager:
         """Отменяет создание заказа"""
         await state.clear()
         await callback.message.edit_text("❌ Оформлення замовлення скасовано.")
+
+
+async def process_show_orders(callback: CallbackQuery):
+    """Обрабатывает запрос на отображение заказов пользователя."""
+    user_id = callback.from_user.id
+    orders = await get_user_orders(user_id)
+
+    if not orders:
+        await callback.message.edit_text(
+            "❌ Ви ще не маєте жодного замовлення.",
+            reply_markup=get_back_to_main_menu()
+        )
+        return
+
+    total_pages = ceil(len(orders) / ORDERS_PER_PAGE)
+    page = 1
+
+    # Получаем заказы для текущей страницы
+    start = (page - 1) * ORDERS_PER_PAGE
+    end = start + ORDERS_PER_PAGE
+    orders_on_page = orders[start:end]
+
+    keyboard = get_orders_keyboard(orders_on_page, page, total_pages)
+
+    await callback.message.edit_text(
+        "📦 Ваші замовлення:",
+        reply_markup=keyboard
+    )
+
+
+async def process_orders_pagination(callback: CallbackQuery):
+    """Обрабатывает навигацию по страницам заказов."""
+    user_id = callback.from_user.id
+    orders = await get_user_orders(user_id)
+
+    total_pages = ceil(len(orders) / ORDERS_PER_PAGE)
+    page = int(callback.data.split(":")[1])
+
+    # Получаем заказы для текущей страницы
+    start = (page - 1) * ORDERS_PER_PAGE
+    end = start + ORDERS_PER_PAGE
+    orders_on_page = orders[start:end]
+
+    keyboard = get_orders_keyboard(orders_on_page, page, total_pages)
+
+    await callback.message.edit_text(
+        "📦 Ваші замовлення:",
+        reply_markup=keyboard
+    )

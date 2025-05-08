@@ -256,3 +256,69 @@ def get_quantity_change_keyboard(items_info: List[dict]) -> InlineKeyboardMarkup
     keyboard.append(back_row)
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def get_orders_keyboard(orders, page, total_pages):
+    """
+    Створює клавіатуру для списку замовлень із кнопками навігації.
+
+    Args:
+        orders (List[Order]): Список замовлень
+        page (int): Поточна сторінка
+        total_pages (int): Загальна кількість сторінок
+
+    Returns:
+        InlineKeyboardMarkup: Клавіатура
+    """
+    builder = InlineKeyboardBuilder()
+
+    # Додаємо кнопки замовлень у стовпчик
+    for order in orders:
+        builder.button(
+            text=f"Замовлення #{order.id} - {order.status}",
+            callback_data=f"order_details:{order.id}"
+        )
+
+    # Кнопки навігації (в один рядок)
+    navigation_buttons = []
+
+    if page > 1:
+        navigation_buttons.append(
+            InlineKeyboardButton(
+                text="⬅️ Попередня",
+                callback_data=f"orders_page:{page - 1}"
+            )
+        )
+
+    if page < total_pages:
+        navigation_buttons.append(
+            InlineKeyboardButton(
+                text="➡️ Наступна",
+                callback_data=f"orders_page:{page + 1}"
+            )
+        )
+
+    # Додаємо кнопки навігації, якщо вони є
+    if navigation_buttons:
+        builder.row(*navigation_buttons)
+
+    # Кнопка повернення до головного меню (в окремому рядку)
+    builder.button(
+        text="🏠 Головне меню",
+        callback_data="back_to_main"
+    )
+
+    builder.adjust(1)  # Всі кнопки замовлень у стовпчик
+    return builder.as_markup()
+
+
+def get_back_to_main_menu() -> InlineKeyboardMarkup:
+    """
+    Создает клавиатуру с кнопкой возврата в главное меню.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="🏠 Повернутися до головного меню",
+        callback_data="back_to_main"
+    )
+    return builder.as_markup()

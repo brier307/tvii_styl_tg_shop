@@ -181,14 +181,6 @@ async def create_order(
         return None
 
 
-async def get_user_orders(tg_id: int) -> List[Order]:
-    """Получает все заказы пользователя"""
-    async with async_session() as session:
-        query = select(Order).where(Order.tg_id == tg_id).order_by(Order.date.desc())
-        result = await session.execute(query)
-        return list(result.scalars().all())
-
-
 async def get_order(order_id: int) -> Optional[Order]:
     """Получает заказ по ID"""
     async with async_session() as session:
@@ -204,3 +196,19 @@ async def update_order_status(order_id: int, status: OrderStatus) -> Optional[Or
         await session.execute(query)
         await session.commit()
         return await get_order(order_id)
+
+
+async def get_user_orders(tg_id: int) -> List[Order]:
+    """
+    Получает все заказы пользователя, отсортированные по дате.
+
+    Args:
+        tg_id (int): Telegram ID пользователя
+
+    Returns:
+        List[Order]: Список заказов
+    """
+    async with async_session() as session:
+        query = select(Order).where(Order.tg_id == tg_id).order_by(Order.date.desc())
+        result = await session.execute(query)
+        return list(result.scalars().all())
