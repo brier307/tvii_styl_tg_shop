@@ -1,9 +1,15 @@
 from app.cart import *
+from app.user_order import OrderManager
+from app.database.requests import set_user
+from app.cart import RedisCart
+from app.database.products import ProductManager
+import logging
 
 product_manager = ProductManager("Залишки номенклатури.xlsx")
 
 user = Router()
 cart = RedisCart()
+order_manager = OrderManager(user)
 
 logger = logging.getLogger(__name__)
 
@@ -15,41 +21,58 @@ async def cmd_start(message: Message, command: CommandObject):
     Формат deep link: https://t.me/bot?start=00-00351422
     где 00-00351422 - артикул товара
     """
-    # Получаем параметр из команды start
-    article = command.args
+    try:
+        # Получаем или создаем пользователя
+        user_id = message.from_user.id
+        user_name = message.from_user.full_name  # Получаем полное имя пользователя
 
-    if article:
-        # Если есть артикул, показываем информацию о товаре
-        product_info = product_manager.get_product_info(article)  # Убрали await
-        if product_info:
-            name, price, available = product_info
+        logger.info(f"Processing /start command for user {user_id} ({user_name})")
 
-            # Проверяем, есть ли товар в корзине
-            user_cart = await cart.get_cart(message.from_user.id)
-            in_cart = user_cart and article in user_cart
+        # Создаем или получаем пользователя
+        await set_user(user_id, user_name)
+        logger.debug(f"User {user_id} registered in database")
 
-            # Формируем сообщение с информацией о товаре
-            text = (
-                f"📦 {name}\n"
-                f"Артикул: {article}\n"
-                f"💰 Ціна: {price:.2f} грн.\n"
-                f"📊 В наявності: {available} шт.\n\n"
-                f"Щоб додати товар до кошика, натисніть кнопку нижче 👇"
-            )
+        # Получаем параметр из команды start
+        article = command.args
 
-            await message.answer(
-                text,
-                reply_markup=get_product_keyboard(article, in_cart)
-            )
-            return
+        if article:
+            # Если есть артикул, показываем информацию о товаре
+            product_info = product_manager.get_product_info(article)
+            if product_info:
+                name, price, available = product_info
 
-    # Если артикула нет или он не найден, показываем главное меню
-    await message.answer(
-        f"👋 Вітаємо у нашому магазині!\n\n"
-        f"🆔 Ваш ID: {message.from_user.id}\n\n"
-        f"Оберіть потрібний розділ:",
-        reply_markup=get_main_keyboard()
-    )
+                # Проверяем, есть ли товар в корзине
+                user_cart = await cart.get_cart(message.from_user.id)
+                in_cart = user_cart and article in user_cart
+
+                # Формируем сообщение с информацией о товаре
+                text = (
+                    f"📦 {name}\n"
+                    f"Артикул: {article}\n"
+                    f"💰 Ціна: {price:.2f} грн.\n"
+                    f"📊 В наявності: {available} шт.\n\n"
+                    f"Щоб додати товар до кошика, натисніть кнопку нижче 👇"
+                )
+
+                await message.answer(
+                    text,
+                    reply_markup=get_product_keyboard(article, in_cart)
+                )
+                return
+
+        # Если артикула нет или он не найден, показываем главное меню
+        await message.answer(
+            f"👋 Вітаємо у нашому магазині!\n\n"
+            f"🆔 Ваш ID: {message.from_user.id}\n\n"
+            f"Оберіть потрібний розділ:",
+            reply_markup=get_main_keyboard()
+        )
+
+    except Exception as e:
+        logger.error(f"Error processing /start command: {str(e)}", exc_info=True)
+        await message.answer(
+            "Виникла помилка при реєстрації. Будь ласка, спробуйте ще раз або зверніться до підтримки."
+        )
 
 
 # Обработчики callback-запросов для главного меню

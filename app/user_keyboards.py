@@ -2,6 +2,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List, Tuple
 
+
 def get_main_keyboard() -> InlineKeyboardMarkup:
     """
     Создает главную клавиатуру бота с основными кнопками:

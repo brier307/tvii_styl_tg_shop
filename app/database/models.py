@@ -50,10 +50,15 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=True)
-    phone: Mapped[str] = mapped_column(String(20), nullable=True)
+    name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
-    orders: Mapped[List["Order"]] = relationship("Order", back_populates="user")
+    # Связь с заказами
+    orders: Mapped[List["Order"]] = relationship(
+        "Order",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
 
 class Order(Base):
@@ -61,9 +66,9 @@ class Order(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tg_id: Mapped[int] = mapped_column(BigInteger, ForeignKey('users.tg_id'), nullable=False)
-    articles: Mapped[str] = mapped_column(JSON, nullable=False)  # Список артикулів в JSON
+    articles: Mapped[str] = mapped_column(JSON, nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    phone: Mapped[str] = mapped_column(String(13), nullable=False)  # +380998235272 (13 символів)
+    phone: Mapped[str] = mapped_column(String(20), nullable=False)
     delivery: Mapped[str] = mapped_column(String(50), nullable=False)
     address: Mapped[str] = mapped_column(Text, nullable=False)
     payment_method: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -73,7 +78,6 @@ class Order(Base):
         nullable=False,
         default=OrderStatus.NEW.value
     )
-    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Связь с пользователем
     user: Mapped["User"] = relationship("User", back_populates="orders")
