@@ -1,6 +1,7 @@
 import logging
 import datetime
 import re
+import json
 
 from math import ceil
 from aiogram import Router, F
@@ -14,12 +15,12 @@ from aiogram.types import (
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from typing import Optional
 
-from app.database.models import DeliveryMethod
-from app.database.requests import create_order, get_user_orders
+from app.database.models import DeliveryMethod, OrderStatus
+from app.database.requests import create_order, get_user_orders, get_order
 from app.database.redis_cart import RedisCart
 from app.database.products import ProductManager
 from aiogram.filters.state import State, StatesGroup
-from app.user_keyboards import get_orders_keyboard, get_back_to_main_menu
+from app.user_keyboards import get_orders_keyboard, get_back_to_main_menu, get_back_to_orders_menu
 
 
 ORDERS_PER_PAGE = 5  # Количество заказов на одной странице
@@ -674,3 +675,44 @@ async def process_orders_pagination(callback: CallbackQuery):
         "📦 Ваші замовлення:",
         reply_markup=keyboard
     )
+
+
+async def show_order_details(callback: CallbackQuery):
+    """Обробляє запит на показ деталей замовлення"""
+    user_id = callback.from_user.id
+    order_id = int(callback.data.split(":")[1])  # Отримуємо ID замовлення з callback_data
+
+    # Отримуємо інформацію про замовлення
+    order = await get_order(order_id)
+
+    if not order or order.tg_id != user_id:
+        await callback.message.edit_text(
+            "❌ Замовлення не знайдено або у вас немає доступу до цього замовлення.",
+            reply_markup=get_back_to_orders_menu()
+        )
+        return
+
+    # Форматуємо інформацію про замовлення
+    articles = json.loads(order.articles)
+    items_text = "\n".join(
+        [f"- {article}: {quantity} шт." for article, quantity in articles.items()]
+    )
+
+    order_details = (
+        f"📦 Деталі замовлення #{order.id}:\n\n"
+        f"📅 Дата: {order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"🛒 Товари:\n{items_text}\n\n"
+        f"💳 Спосіб оплати: {order.payment_method}\n"
+        f"🚚 Доставка: {order.delivery}\n"
+        f"📍 Адреса: {order.address}\n"
+        f"👤 Отримувач: {order.name}\n"
+        f"📞 Телефон: {order.phone}\n"
+        f"📌 Статус: {OrderStatus(order.status).get_uk_description()}"
+    )
+
+    await callback.message.edit_text(
+        order_details,
+        reply_markup=get_back_to_orders_menu()
+    )
+
+

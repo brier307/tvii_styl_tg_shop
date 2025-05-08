@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List, Tuple
+from app.database.models import OrderStatus
 
 
 def get_main_keyboard() -> InlineKeyboardMarkup:
@@ -156,7 +157,6 @@ def get_support_keyboard() -> InlineKeyboardMarkup:
     """Создает клавиатуру для раздела поддержки"""
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="📝 Написати повідомлення", callback_data="write_support")
     builder.button(text="❓ Часті питання", callback_data="faq")
     builder.button(text="◀️ Головне меню", callback_data="back_to_main")
 
@@ -274,8 +274,9 @@ def get_orders_keyboard(orders, page, total_pages):
 
     # Додаємо кнопки замовлень у стовпчик
     for order in orders:
+        status_uk = OrderStatus(order.status).get_uk_description()  # Перекладаємо статус
         builder.button(
-            text=f"Замовлення #{order.id} - {order.status}",
+            text=f"Замовлення #{order.id} - {status_uk}",
             callback_data=f"order_details:{order.id}"
         )
 
@@ -320,5 +321,17 @@ def get_back_to_main_menu() -> InlineKeyboardMarkup:
     builder.button(
         text="🏠 Повернутися до головного меню",
         callback_data="back_to_main"
+    )
+    return builder.as_markup()
+
+
+def get_back_to_orders_menu() -> InlineKeyboardMarkup:
+    """
+    Створює клавіатуру з кнопкою повернення до меню замовлень.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="🔙 Назад",
+        callback_data="show_orders"
     )
     return builder.as_markup()

@@ -182,7 +182,15 @@ async def create_order(
 
 
 async def get_order(order_id: int) -> Optional[Order]:
-    """Получает заказ по ID"""
+    """
+    Отримує замовлення за його ID.
+
+    Args:
+        order_id (int): ID замовлення
+
+    Returns:
+        Optional[Order]: Замовлення або None, якщо не знайдено
+    """
     async with async_session() as session:
         query = select(Order).where(Order.id == order_id)
         result = await session.execute(query)
@@ -212,3 +220,21 @@ async def get_user_orders(tg_id: int) -> List[Order]:
         query = select(Order).where(Order.tg_id == tg_id).order_by(Order.date.desc())
         result = await session.execute(query)
         return list(result.scalars().all())
+
+
+async def get_all_orders():
+    """Отримує всі замовлення з бази даних."""
+    async with async_session() as session:
+        query = select(Order).order_by(Order.date.desc())  # Конструктор запиту
+        result = await session.execute(query)
+        return result.scalars().all()  # Повертає всі записи як об'єкти ORM
+
+
+async def get_orders_by_status(status: str):
+    """
+    Отримує замовлення за заданим статусом.
+    """
+    async with async_session() as session:
+        query = select(Order).where(Order.status == status).order_by(Order.date.desc())
+        result = await session.execute(query)
+        return result.scalars().all()

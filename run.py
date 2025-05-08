@@ -16,7 +16,7 @@ async def main():
               default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     
     dp = Dispatcher()
-    dp.include_routers(user, admin)
+    dp.include_routers(admin, user)
     dp.startup.register(startup)
     dp.shutdown.register(shutdown)
     

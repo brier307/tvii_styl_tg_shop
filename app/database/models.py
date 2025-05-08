@@ -36,7 +36,7 @@ class OrderStatus(enum.Enum):
             self.CANCELLED_BY_ADMIN: "Скасовано адміністратором",
             self.CANCELLED_BY_USER: "Скасовано користувачем",
         }
-        return descriptions[self]
+        return descriptions.get(self, "Невідомий статус")
 
 
 class DeliveryMethod(enum.Enum):
