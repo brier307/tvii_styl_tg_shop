@@ -90,7 +90,7 @@ async def process_orders_pagination(callback: CallbackQuery):
     )
 
 
-@admin.callback_query(F.data == "admin_new_orders")
+@admin.callback_query(F.data == "admin_orders_status:new")
 async def show_new_orders(callback: CallbackQuery):
     """Показує замовлення зі статусом 'new'."""
     orders = await get_orders_by_status("new")
