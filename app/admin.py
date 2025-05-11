@@ -414,7 +414,10 @@ async def show_admin_order_details(callback: CallbackQuery):
         f"📌 <b>Статус:</b> {OrderStatus(order.status).get_uk_description()}"
     )
 
+    # Використовуємо готову клавіатуру для замовлення
+    keyboard = get_order_details_keyboard(order_id)
+
     await callback.message.edit_text(
         order_details,
-        reply_markup=get_back_to_orders_menu()
+        reply_markup=keyboard
     )

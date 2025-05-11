@@ -136,3 +136,74 @@ def edit_order_status() -> InlineKeyboardMarkup:
         callback_data="edit_order_status"
     )
     return builder.as_markup()
+
+
+def get_order_details_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавіатура для перегляду деталей замовлення з кнопками "Назад" та "Змінити статус".
+    """
+    builder = InlineKeyboardBuilder()
+
+    # Кнопка "Змінити статус замовлення"
+    builder.button(
+        text="✏️ Змінити статус замовлення",
+        callback_data=f"edit_order_status:{order_id}"
+    )
+    # Кнопка "Назад до меню замовлень"
+    builder.button(
+        text="🔙 Назад до меню замовлень",
+        callback_data="admin_orders_menu"
+    )
+
+    builder.adjust(1)  # Кнопки у стовпчик
+    return builder.as_markup()
+
+
+def get_back_to_order_info_menu() -> InlineKeyboardMarkup:
+    """
+    Клавіатура для повернення до інформації про ордер.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="🔙 Назад до інформації про замовлення",
+        callback_data="back_to_order_info_menu"
+    )
+    return builder.as_markup()
+
+
+def get_change_status_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    """
+    Створює клавіатуру для зміни статусу замовлення з усіма можливими статусами та кнопкою "Назад".
+
+    Args:
+        order_id (int): ID замовлення.
+
+    Returns:
+        InlineKeyboardMarkup: Клавіатура з кнопками для зміни статусу.
+    """
+    builder = InlineKeyboardBuilder()
+
+    # Список статусів і їх описів
+    statuses = [
+        ("new", "🕒 В обробці"),
+        ("confirmed", "✅ Підтверджено"),
+        ("shipped", "🚚 Відправлено"),
+        ("delivered", "📦 Доставлено"),
+        ("cancelled_by_admin", "❌ Скасовано адміністратором"),
+    ]
+
+    # Додаємо кнопки для кожного статусу
+    for status_value, status_text in statuses:
+        builder.button(
+            text=status_text,
+            callback_data=f"change_order_status:{order_id}:{status_value}"
+        )
+
+    # Додаємо кнопку "Назад" для повернення до деталей замовлення
+    builder.button(
+        text="🔙 Назад до деталей замовлення",
+        callback_data=f"admin_order_details:{order_id}"
+    )
+
+    builder.adjust(1)  # Всі кнопки у стовпчик
+    return builder.as_markup()
