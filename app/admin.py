@@ -4,7 +4,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Filter, CommandStart, Command
 from app.admin_keyboards import *
-from app.database.requests import get_all_orders, get_orders_by_status, get_order
+from app.database.requests import get_all_orders, get_orders_by_status, get_order, update_order_status
 
 from config import ADMIN
 
@@ -406,6 +406,7 @@ async def show_admin_order_details(callback: CallbackQuery):
         f"📦 <b>Деталі замовлення #{order.id}</b>:\n\n"
         f"📅 <b>Дата:</b> {order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"🛒 <b>Товари:</b>\n{items_text}\n\n"
+        f"💰 <b>Сума замовлення:</b> {order.total_price:.2f} грн\n"
         f"💳 <b>Спосіб оплати:</b> {order.payment_method}\n"
         f"🚚 <b>Доставка:</b> {order.delivery}\n"
         f"📍 <b>Адреса:</b> {order.address}\n"
@@ -414,10 +415,83 @@ async def show_admin_order_details(callback: CallbackQuery):
         f"📌 <b>Статус:</b> {OrderStatus(order.status).get_uk_description()}"
     )
 
-    # Використовуємо готову клавіатуру для замовлення
-    keyboard = get_order_details_keyboard(order_id)
-
     await callback.message.edit_text(
         order_details,
+        reply_markup=get_order_details_keyboard(order_id)
+    )
+
+
+@admin.callback_query(F.data.startswith("edit_order_status:"))
+async def edit_order_status(callback: CallbackQuery):
+    """
+    Виводить клавіатуру для зміни статусу замовлення.
+    """
+    order_id = int(callback.data.split(":")[1])  # Отримуємо ID замовлення
+    keyboard = get_change_status_keyboard(order_id)
+
+    await callback.message.edit_text(
+        f"✏️ Виберіть новий статус для замовлення #{order_id}:",
         reply_markup=keyboard
     )
+
+
+@admin.callback_query(F.data.startswith("change_order_status:"))
+async def change_order_status(callback: CallbackQuery):
+    """
+    Обрабатывает изменение статуса заказа администратором и возвращает к информации о заказе.
+
+    Args:
+        callback (CallbackQuery): Запрос от администратора.
+    """
+    try:
+        # Извлечение информации из callback_data
+        _, order_id, new_status = callback.data.split(":")
+        order_id = int(order_id)
+
+        # Обновление статуса заказа в базе данных
+        updated_order = await update_order_status(order_id, OrderStatus(new_status))
+
+        if not updated_order:
+            await callback.answer("❌ Не вдалося оновити статус замовлення.", show_alert=True)
+            return
+
+        # Отправка уведомления пользователю
+        user_id = updated_order.tg_id  # Получаем Telegram ID пользователя
+        status_description = OrderStatus(new_status).get_uk_description()
+        notification_message = (
+            f"Статус Вашого замовлення #{order_id} змінено на: {status_description}"
+        )
+
+        # Отправка сообщения пользователю
+        await callback.bot.send_message(chat_id=user_id, text=notification_message)
+
+        # Форматирование информации о заказе
+        articles = json.loads(updated_order.articles)
+        items_text = "\n".join(
+            [f"- {article}: {quantity} шт." for article, quantity in articles.items()]
+        )
+
+        order_details = (
+            f"📦 <b>Деталі замовлення #{updated_order.id}</b>:\n\n"
+            f"📅 <b>Дата:</b> {updated_order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"🛒 <b>Товари:</b>\n{items_text}\n\n"
+            f"💰 <b>Сума замовлення:</b> {updated_order.total_price:.2f} грн\n"
+            f"💳 <b>Спосіб оплати:</b> {updated_order.payment_method}\n"
+            f"🚚 <b>Доставка:</b> {updated_order.delivery}\n"
+            f"📍 <b>Адреса:</b> {updated_order.address}\n"
+            f"👤 <b>Отримувач:</b> {updated_order.name}\n"
+            f"📞 <b>Телефон:</b> {updated_order.phone}\n"
+            f"📌 <b>Статус:</b> {OrderStatus(updated_order.status).get_uk_description()}"
+        )
+
+        # Получение клавиатуры для деталей заказа
+        keyboard = get_order_details_keyboard(order_id)
+
+        # Обновление сообщения с информацией о заказе
+        await callback.message.edit_text(
+            order_details,
+            reply_markup=keyboard
+        )
+
+    except Exception as e:
+        await callback.answer(f"⚠️ Произошла ошибка: {str(e)}", show_alert=True)

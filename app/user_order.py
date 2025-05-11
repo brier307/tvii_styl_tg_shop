@@ -22,6 +22,7 @@ from app.database.products import ProductManager
 from aiogram.filters.state import State, StatesGroup
 from app.user_keyboards import get_orders_keyboard, get_back_to_main_menu, get_back_to_orders_menu
 
+from config import ADMIN
 
 ORDERS_PER_PAGE = 5  # Количество заказов на одной странице
 
@@ -339,7 +340,6 @@ class OrderManager:
                     show_alert=True
                 )
 
-
     async def process_nova_poshta_city(self, message: Message, state: FSMContext):
         """Обрабатывает ввод города для Новой Почты"""
         await state.update_data(nova_poshta_city=message.text.strip())
@@ -474,35 +474,82 @@ class OrderManager:
         )
 
     async def process_back(self, callback: CallbackQuery, state: FSMContext):
-        """Обрабатывает возврат на предыдущий шаг"""
+        """Handles returning to the previous step"""
         current_state = await state.get_state()
+        logger.info(f"User {callback.from_user.id} triggered 'Back' from state: {current_state}")
 
-        # Если возвращаемся с шага ввода телефона, убираем клавиатуру с контактом
-        if current_state == OrderStates.PHONE_NUMBER.state:
-            await callback.message.answer(
-                "Повернення до попереднього кроку...",
-                reply_markup=ReplyKeyboardRemove()
-            )
-
+        # Mapping of states for returning to the previous step
         states_map = {
-            OrderStates.NOVA_POSHTA_OFFICE: (OrderStates.NOVA_POSHTA_CITY,
-                                             "Введіть назву населеного пункту:"),
-            OrderStates.RECIPIENT_NAME: (OrderStates.DELIVERY_METHOD,
-                                         "Оберіть спосіб доставки:"),
-            OrderStates.PHONE_NUMBER: (OrderStates.RECIPIENT_NAME,
-                                       "Введіть ПІБ отримувача:"),
-            OrderStates.PAYMENT_METHOD: (OrderStates.PHONE_NUMBER,
-                                         "Введіть номер телефону:"),
-            OrderStates.CONFIRMATION: (OrderStates.PAYMENT_METHOD,
-                                       "Оберіть спосіб оплати:")
+            OrderStates.NOVA_POSHTA_CITY: {
+                "state": OrderStates.DELIVERY_METHOD,
+                "message": "Оберіть спосіб доставки:",
+                "keyboard": self.create_delivery_keyboard()
+            },
+            OrderStates.NOVA_POSHTA_OFFICE: {
+                "state": OrderStates.NOVA_POSHTA_CITY,
+                "message": "Введіть назву населеного пункту:",
+                "keyboard": self.create_back_keyboard()
+            },
+            OrderStates.UKRPOSHTA_INDEX: {
+                "state": OrderStates.DELIVERY_METHOD,
+                "message": "Оберіть спосіб доставки:",
+                "keyboard": self.create_delivery_keyboard()
+            },
+            OrderStates.RECIPIENT_NAME: {
+                "state": OrderStates.DELIVERY_METHOD,
+                "message": "Оберіть спосіб доставки:",
+                "keyboard": self.create_delivery_keyboard()
+            },
+            OrderStates.PHONE_NUMBER: {
+                "state": OrderStates.RECIPIENT_NAME,
+                "message": "Введіть ПІБ отримувача:",
+                "keyboard": self.create_back_keyboard()
+            },
+            OrderStates.PAYMENT_METHOD: {
+                "state": OrderStates.PHONE_NUMBER,
+                "message": "Введіть номер телефону:",
+                "keyboard": self.create_back_keyboard()
+            },
+            OrderStates.CONFIRMATION: {
+                "state": OrderStates.PAYMENT_METHOD,
+                "message": "Оберіть спосіб оплати:",
+                "keyboard": self.create_payment_keyboard()
+            }
         }
 
         if current_state in states_map:
-            new_state, message_text = states_map[current_state]
+            # Get the new state, message text, and keyboard
+            config = states_map[current_state]
+            new_state = config["state"]
+            message_text = config["message"]
+            keyboard = config["keyboard"]
+
+            logger.info(f"Returning user {callback.from_user.id} to state: {new_state}")
+
+            # Update the state
             await state.set_state(new_state)
+
+            # Убираем клавиатуру с кнопкой контакта если она есть
+            if current_state == OrderStates.PHONE_NUMBER:
+                await callback.message.answer(
+                    "Повернення до попереднього кроку...",
+                    reply_markup=ReplyKeyboardRemove()
+                )
+
+            # Update the message and keyboard
             await callback.message.edit_text(
                 message_text,
-                reply_markup=self.create_back_keyboard()
+                reply_markup=keyboard
+            )
+            logger.info(f"User {callback.from_user.id} successfully returned to state: {new_state}")
+        else:
+            # If the state is not found, log a warning and reset to the main menu
+            logger.warning(
+                f"User {callback.from_user.id} attempted to go back from an unhandled state: {current_state}")
+            await state.clear()
+            await callback.message.edit_text(
+                "Повернення до головного меню...",
+                reply_markup=get_back_to_main_menu()
             )
 
     async def process_payment_method(self, callback: CallbackQuery, state: FSMContext):
@@ -569,12 +616,27 @@ class OrderManager:
 
                 if order:
                     logger.info(f"Successfully created order #{order.id} for user {user_id}")
+
                     # Очищаем корзину
                     await self.cart.clear_cart(user_id)
+
+                    # Повідомлення користувачу
                     await callback.message.edit_text(
                         f"✅ Замовлення #{order.id} успішно оформлено!\n\n"
                         "Ми зв'яжемося з вами найближчим часом для підтвердження замовлення."
                     )
+
+                    # Повідомлення адміністраторам
+                    admin_message = (
+                        f"📦 <b>Нове замовлення #{order.id}</b>\n"
+                        f"📅 <b>Дата:</b> {order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                    )
+
+                    for admin_id in ADMIN:
+                        try:
+                            await callback.bot.send_message(chat_id=admin_id, text=admin_message, parse_mode="HTML")
+                        except Exception as e:
+                            logger.error(f"Не вдалося надіслати повідомлення адміністратору {admin_id}: {str(e)}")
                 else:
                     logger.error(f"Failed to create order for user {user_id}")
                     await callback.message.edit_text(
@@ -594,38 +656,6 @@ class OrderManager:
 
         await state.clear()
         logger.info(f"Cleared state for user {user_id}")
-
-
-    async def process_back(self, callback: CallbackQuery, state: FSMContext):
-        """Обрабатывает возврат на предыдущий шаг"""
-        current_state = await state.get_state()
-
-        states_map = {
-            OrderStates.NOVA_POSHTA_OFFICE: (OrderStates.NOVA_POSHTA_CITY,
-                                             "Введіть назву населеного пункту:"),
-            OrderStates.RECIPIENT_NAME: (OrderStates.DELIVERY_METHOD,
-                                         "Оберіть спосіб доставки:"),
-            OrderStates.PHONE_NUMBER: (OrderStates.RECIPIENT_NAME,
-                                       "Введіть ПІБ отримувача:"),
-            OrderStates.PAYMENT_METHOD: (OrderStates.PHONE_NUMBER,
-                                         "Введіть номер телефону:"),
-            OrderStates.CONFIRMATION: (OrderStates.PAYMENT_METHOD,
-                                       "Оберіть спосіб оплати:")
-        }
-
-
-        if current_state in states_map:
-            new_state, message_text = states_map[current_state]
-            await state.set_state(new_state)
-            await callback.message.edit_text(
-                message_text,
-                reply_markup=self.create_back_keyboard()
-            )
-
-    async def cancel_order(self, callback: CallbackQuery, state: FSMContext):
-        """Отменяет создание заказа"""
-        await state.clear()
-        await callback.message.edit_text("❌ Оформлення замовлення скасовано.")
 
 
 async def process_show_orders(callback: CallbackQuery):

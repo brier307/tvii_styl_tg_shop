@@ -78,10 +78,10 @@ class Order(Base):
         nullable=False,
         default=OrderStatus.NEW.value
     )
+    total_price: Mapped[float] = mapped_column(nullable=False, default=0.0)  # Добавлен новый столбец
 
     # Связь с пользователем
     user: Mapped["User"] = relationship("User", back_populates="orders")
-
 
 async def async_main():
     async with engine.begin() as conn:

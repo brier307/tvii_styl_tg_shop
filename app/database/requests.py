@@ -5,10 +5,10 @@ from typing import Optional, List, Dict
 import json
 import logging
 from datetime import datetime
-
+from pytz import timezone
 
 from app.database.models import async_session, User, Order, OrderStatus, DeliveryMethod
-
+from app.database.products import ProductManager
 
 logger = logging.getLogger(__name__)
 
@@ -94,34 +94,25 @@ async def create_order(
         payment_method: str
 ) -> Optional[Order]:
     """
-    Создает новый заказ в базе данных.
+    Створює нове замовлення у базі даних.
 
     Args:
-        tg_id (int): Telegram ID пользователя
-        articles (Dict[str, int]): Словарь товаров {артикул: количество}
-        name (str): ФИО получателя
-        phone (str): Номер телефона
-        delivery (DeliveryMethod): Способ доставки (enum)
-        address (str): Адрес доставки
-        payment_method (str): Способ оплаты
+        tg_id (int): Telegram ID користувача
+        articles (Dict[str, int]): Словник товарів {артикул: кількість}
+        name (str): ПІБ отримувача
+        phone (str): Номер телефону
+        delivery (DeliveryMethod): Спосіб доставки (enum)
+        address (str): Адреса доставки
+        payment_method (str): Спосіб оплати
 
     Returns:
-        Optional[Order]: Созданный заказ или None в случае ошибки
+        Optional[Order]: Створене замовлення або None у разі помилки
     """
     logger.info(f"Creating new order for user {tg_id}")
-    logger.debug(
-        f"Order details: "
-        f"articles={articles}, "
-        f"name={name}, "
-        f"phone={phone}, "
-        f"delivery={delivery.value}, "
-        f"address={address}, "
-        f"payment_method={payment_method}"
-    )
 
     try:
         async with async_session() as session:
-            # Проверяем существование пользователя
+            # Перевіряємо існування користувача
             query = select(User).where(User.tg_id == tg_id)
             user = await session.scalar(query)
 
@@ -131,12 +122,20 @@ async def create_order(
 
             logger.debug(f"Found user: {user.id}")
 
-            # Проверяем корректность данных
-            if not all([name, phone, address, payment_method, articles]):
-                logger.error("Missing required order fields")
-                return None
+            # Обчислюємо загальну суму замовлення
+            total_price = 0.0
+            product_manager = ProductManager()  # Ініціалізуємо ProductManager
+            for article, quantity in articles.items():
+                product_info = product_manager.get_product_info(article)
+                if product_info:
+                    _, price, _ = product_info
+                    total_price += price * quantity
 
-            # Создаем новый заказ
+            # Встановлюємо дату у часовому поясі UTC+3
+            utc_plus_3 = timezone('Etc/GMT-3')
+            current_time = datetime.now(utc_plus_3)
+
+            # Створюємо нове замовлення
             new_order = Order(
                 tg_id=tg_id,
                 articles=json.dumps(articles),
@@ -145,23 +144,24 @@ async def create_order(
                 delivery=delivery.value,
                 address=address,
                 payment_method=payment_method,
-                date=datetime.utcnow(),
-                status=OrderStatus.NEW.value
+                date=current_time,  # Використовуємо дату з часовим поясом UTC+3
+                status=OrderStatus.NEW.value,
+                total_price=total_price  # Зберігаємо суму замовлення
             )
 
-            # Добавляем заказ в сессию
+            # Додаємо замовлення до сесії
             session.add(new_order)
 
-            # Коммитим изменения
+            # Коммітимо зміни
             await session.commit()
 
-            # Обновляем объект заказа после коммита
+            # Оновлюємо об'єкт замовлення після комміта
             await session.refresh(new_order)
 
             created_order_id = new_order.id
             logger.info(f"Successfully created order #{created_order_id} for user {tg_id}")
 
-            # Получаем свежую копию заказа
+            # Отримуємо свіжу копію замовлення
             query = select(Order).where(Order.id == created_order_id)
             final_order = await session.scalar(query)
 
@@ -198,12 +198,21 @@ async def get_order(order_id: int) -> Optional[Order]:
 
 
 async def update_order_status(order_id: int, status: OrderStatus) -> Optional[Order]:
-    """Обновляет статус заказа"""
+    """
+    Обновляет статус заказа.
+
+    Args:
+        order_id (int): ID заказа.
+        status (OrderStatus): Новый статус заказа.
+
+    Returns:
+        Optional[Order]: Обновленный заказ или None, если обновление не удалось.
+    """
     async with async_session() as session:
         query = update(Order).where(Order.id == order_id).values(status=status.value)
         await session.execute(query)
         await session.commit()
-        return await get_order(order_id)
+        return await get_order(order_id)  # Возвращаем обновленный заказ
 
 
 async def get_user_orders(tg_id: int) -> List[Order]:
