@@ -124,3 +124,15 @@ def get_back_to_orders_menu() -> InlineKeyboardMarkup:
         callback_data="admin_orders_menu"
     )
     return builder.as_markup()
+
+
+def edit_order_status() -> InlineKeyboardMarkup:
+    """
+    Клавіатура для зміни статусу замовлення.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✏️Змінити статус",
+        callback_data="edit_order_status"
+    )
+    return builder.as_markup()
