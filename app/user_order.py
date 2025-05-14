@@ -49,6 +49,7 @@ class OrderStates(StatesGroup):
     UKRPOSHTA_INDEX = State()
     RECIPIENT_NAME = State()
     PHONE_NUMBER = State()
+    COMMENT = State()
     PAYMENT_METHOD = State()
     CONFIRMATION = State()
 
@@ -90,6 +91,10 @@ class OrderManager:
         self.router.message.register(
             self.process_phone_number,
             OrderStates.PHONE_NUMBER
+        )
+        self.router.message.register(  # Register handler for the new comment step
+            self.process_comment,
+            OrderStates.COMMENT
         )
         self.router.callback_query.register(
             self.process_payment_method,
@@ -425,39 +430,74 @@ class OrderManager:
         )
 
     async def process_phone_number(self, message: Message, state: FSMContext):
-        """Обрабатывает ввод номера телефона"""
+        """Обробляє введення номера телефону користувачем."""
         try:
+            # Отримання номера телефону: через контакт або текст
             if message.contact:
                 phone = message.contact.phone_number
             else:
                 phone = message.text.strip()
 
+            # Перевірка валідності номера телефону
             if not self.validate_phone(phone):
                 await message.answer(
-                    "Некоректний номер телефону. Будь ласка, введіть номер у форматі +380XXXXXXXXX",
+                    "❌ Некоректний номер телефону. "
+                    "Будь ласка, введіть номер у форматі +380XXXXXXXXX:",
                     reply_markup=self.create_back_keyboard()
                 )
                 return
 
+            # Збереження номера телефону в стані FSM
             await state.update_data(phone=phone)
-            await state.set_state(OrderStates.PAYMENT_METHOD)
 
-            # Убираем клавиатуру с кнопкой контакта
+            # Перехід до стану введення коментаря
+            await state.set_state(OrderStates.COMMENT)
+
+            # Отримання товарів у кошику
+            cart_items = await self.cart.get_cart(message.from_user.id)
+            items_text = []
+            for article in cart_items.keys():
+                product_data = self.product_manager.get_grouped_products(article)
+                if product_data:
+                    items_text.append(f"📦 {product_data['name']}\n")
+                    for spec in product_data["specifications"]:
+                        items_text.append(f"🔘 {spec['specification']}\n📊 В наявності: {spec['quantity']} шт.\n")
+            items_text = "\n".join(items_text)
+
+            # Повідомлення користувачу зі списком товарів і запитом на коментар
             await message.answer(
-                "Оберіть спосіб оплати:",
-                reply_markup=ReplyKeyboardRemove()  # Убираем reply клавиатуру
+                f"Введіть коментар до замовлення (наприклад, уточнення кольору/розміру):\n\n{items_text}",
+                reply_markup=ReplyKeyboardRemove()
             )
 
-            # Показываем клавиатуру выбора способа оплаты
+        except Exception as e:
+            # Обробка помилок
+            logger.error(f"Error in process_phone_number: {e}", exc_info=True)
             await message.answer(
-                "Доступні способи оплати:",
+                "❌ Виникла помилка при обробці номера телефону. Спробуйте ще раз.",
+                reply_markup=self.create_back_keyboard()
+            )
+
+    async def process_comment(self, message: Message, state: FSMContext):
+        """Обробка введення коментаря користувачем."""
+        try:
+            # Збереження коментаря в стані FSM
+            await state.update_data(comment=message.text.strip())
+
+            # Перехід до стану вибору методу оплати
+            await state.set_state(OrderStates.PAYMENT_METHOD)
+
+            # Повідомлення користувачу про наступний крок
+            await message.answer(
+                "Дякуємо! Тепер оберіть спосіб оплати:",
                 reply_markup=self.create_payment_keyboard()
             )
 
         except Exception as e:
-            print(f"Error in process_phone_number: {e}")
+            # Обробка помилок
+            logger.error(f"Error in process_comment: {e}", exc_info=True)
             await message.answer(
-                "Виникла помилка при обробці номера телефону. Спробуйте ще раз.",
+                "❌ Виникла помилка при обробці коментаря. Спробуйте ще раз.",
                 reply_markup=self.create_back_keyboard()
             )
 
