@@ -98,7 +98,7 @@ async def show_new_orders(callback: CallbackQuery):
 
     if not orders:
         await callback.message.edit_text(
-            "❌ Немає замовлень зі статусом 'new'.",
+            "❌ Немає замовлень зі статусом 'В обробці'.",
             reply_markup=get_back_to_orders_menu()
         )
         return
@@ -114,7 +114,7 @@ async def show_new_orders(callback: CallbackQuery):
     keyboard = get_orders_keyboard(orders_on_page, page, total_pages)
 
     await callback.message.edit_text(
-        "📦 Замовлення зі статусом 'new':",
+        "📦 Замовлення зі статусом 'В обробці':",
         reply_markup=keyboard
     )
 
@@ -430,7 +430,7 @@ async def edit_order_status(callback: CallbackQuery):
     keyboard = get_change_status_keyboard(order_id)
 
     await callback.message.edit_text(
-        f"✏️ Виберіть новий статус для замовлення #{order_id}:",
+        f"✏️ Оберіть новий статус для замовлення #{order_id}:",
         reply_markup=keyboard
     )
 

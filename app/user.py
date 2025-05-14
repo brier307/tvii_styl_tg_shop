@@ -65,7 +65,7 @@ async def cmd_start(message: Message, command: CommandObject):
         # Если артикула нет или он не найден, показываем главное меню
         await message.answer(
             f"👋 Вітаємо у нашому магазині!\n\n"
-            f"🆔 Ваш ID: {message.from_user.id}\n\n"
+            f"Вас вітає магазин \"Твій Стиль\"\n\n"
             f"Оберіть потрібний розділ:",
             reply_markup=get_main_keyboard()
         )
@@ -99,7 +99,7 @@ async def process_show_support(callback: CallbackQuery):
 async def process_back_to_main(callback: CallbackQuery):
     await callback.message.edit_text(
         f"👋 Головне меню\n\n"
-        f"🆔 Ваш ID: {callback.from_user.id}\n\n"
+        f"Вас вітає магазин \"Твій Стиль\"\n\n"
         f"Оберіть потрібний розділ:",
         reply_markup=get_main_keyboard()
     )
