@@ -1,27 +1,27 @@
 import pandas as pd
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, List
 from pathlib import Path
 
 
 class ProductManager:
     def __init__(self, file_path: str = "Залишки номенклатури.xlsx"):
         """
-        Инициализация менеджера продуктов
+        Ініціалізація менеджера продуктів
 
         Args:
-            file_path (str): путь к Excel файлу с товарами
+            file_path (str): шлях до Excel файлу з товарами
         """
         self.file_path = Path(file_path)
         self.df = None
         self._load_data()
 
     def _load_data(self) -> None:
-        """Загрузка данных из Excel файла"""
+        """Завантаження даних з Excel файлу"""
         try:
-            # Загружаем файл, начиная со второй строки (header=1)
+            # Завантажуємо файл, починаючи з другої строки (header=1)
             self.df = pd.read_excel(
                 self.file_path,
-                header=1,  # Заголовки находятся во второй строке
+                header=1,  # Заголовки знаходяться у другій строкі
                 usecols=[
                     "Номенклатура",
                     "Артикул",
@@ -30,36 +30,89 @@ class ProductManager:
                 ]
             )
 
-            # Очищаем данные
+            # Очищаємо дані
             self.df = self.df.dropna(subset=["Номенклатура"])
-            # Очищаем пробелы в артикулах, если они есть
+            # Видаляємо пробіли в артикулах, якщо вони є
             self.df["Артикул"] = self.df["Артикул"].astype(str).str.strip()
-            # Заменяем 'nan' на пустую строку для артикулов
+            # Замінюємо 'nan' на пусту строку для артикулів
             self.df.loc[self.df["Артикул"] == 'nan', "Артикул"] = ''
 
-            # Преобразуем числовые колонки
+            # Преобразуємо числові колонки
             self.df["Кількість\n(залишок)"] = pd.to_numeric(self.df["Кількість\n(залишок)"], errors='coerce').fillna(0)
             self.df["Ціна"] = pd.to_numeric(self.df["Ціна"], errors='coerce').fillna(0)
 
         except Exception as e:
-            print(f"Ошибка при загрузке файла: {e}")
+            print(f"Помилка при завантаженні файлу: {e}")
             raise
 
-    def get_product_info(self, article: str) -> Optional[Tuple[str, float, int]]:
+    def get_product_details(self, article: str) -> Optional[dict]:
         """
-        Получить информацию о товаре по артикулу
+        Отримати детальну інформацію про товар, включаючи специфікації.
 
         Args:
-            article (str): артикул товара
+            article (str): Артикул товару.
 
         Returns:
-            Optional[Tuple[str, float, int]]: кортеж (название, цена, количество) или None, если товар не найден
+            Optional[dict]: Словник із деталями товару та специфікаціями,
+                            або None, якщо товар не знайдено.
         """
         try:
             if not article or article.strip() == '':
                 return None
 
-            # Поиск товара по артикулу
+            # Знаходимо всі товари з вказаним артикулом
+            products = self.df[self.df["Артикул"] == article.strip()]
+
+            if products.empty:
+                return None
+
+            # Основна інформація про товар
+            name = products["Номенклатура"].iloc[0].split("(")[0].strip()  # Базова назва без специфікацій
+            price = float(products["Ціна"].iloc[0])
+
+            # Формуємо список специфікацій
+            specifications = []
+            for _, row in products.iterrows():
+                # Парсимо специфікацію від першої "(" і до кінця, навіть якщо немає ")"
+                spec_index = row["Номенклатура"].find("(")
+                if spec_index != -1:
+                    spec_name = row["Номенклатура"][spec_index:].strip()
+                else:
+                    spec_name = ""  # Якщо дужки немає взагалі
+
+                specification = {
+                    "specification": spec_name.rstrip(")"),  # Видаляємо зайву дужку, якщо вона є
+                    "quantity": int(row["Кількість\n(залишок)"]),
+                    "price": float(row["Ціна"]),
+                }
+                specifications.append(specification)
+
+            return {
+                "name": name,
+                "article": article,
+                "price": price,
+                "specifications": specifications,
+            }
+
+        except Exception as e:
+            print(f"Помилка при отриманні деталей товару: {e}")
+            return None
+
+    def get_product_info(self, article: str) -> Optional[Tuple[str, float, int]]:
+        """
+        Отримати інформацію про товар за артикулом.
+
+        Args:
+            article (str): Артикул товару.
+
+        Returns:
+            Optional[Tuple[str, float, int]]: Кортеж (назва, ціна, кількість) або None, якщо товар не знайдено.
+        """
+        try:
+            if not article or article.strip() == '':
+                return None
+
+            # Пошук товару за артикулом
             product = self.df[self.df["Артикул"] == article.strip()]
 
             if product.empty:
@@ -72,18 +125,18 @@ class ProductManager:
             return (name, price, quantity)
 
         except Exception as e:
-            print(f"Ошибка при получении информации о товаре: {e}")
+            print(f"Помилка при отриманні інформації про товар: {e}")
             return None
 
     def is_available(self, article: str) -> bool:
         """
-        Проверить наличие товара на складе
+        Перевірити наявність товару на складі.
 
         Args:
-            article (str): артикул товара
+            article (str): Артикул товару.
 
         Returns:
-            bool: True если товар есть в наличии, False если нет
+            bool: True, якщо товар є в наявності, False, якщо ні.
         """
         product_info = self.get_product_info(article)
         if product_info is None:
@@ -92,13 +145,13 @@ class ProductManager:
 
     def get_price(self, article: str) -> Optional[float]:
         """
-        Получить цену товара по артикулу
+        Отримати ціну товару за артикулом.
 
         Args:
-            article (str): артикул товара
+            article (str): Артикул товару.
 
         Returns:
-            Optional[float]: цена товара или None, если товар не найден
+            Optional[float]: Ціна товару або None, якщо товар не знайдено.
         """
         product_info = self.get_product_info(article)
         if product_info is None:
@@ -107,13 +160,13 @@ class ProductManager:
 
     def get_name(self, article: str) -> Optional[str]:
         """
-        Получить название товара по артикулу
+        Отримати назву товару за артикулом.
 
         Args:
-            article (str): артикул товара
+            article (str): Артикул товару.
 
         Returns:
-            Optional[str]: название товара или None, если товар не найден
+            Optional[str]: Назва товару або None, якщо товар не знайдено.
         """
         product_info = self.get_product_info(article)
         if product_info is None:
@@ -121,5 +174,5 @@ class ProductManager:
         return product_info[0]
 
     def refresh_data(self) -> None:
-        """Обновить данные из Excel файла"""
+        """Оновити дані з Excel файлу."""
         self._load_data()

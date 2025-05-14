@@ -19,61 +19,64 @@ logger = logging.getLogger(__name__)
 @user.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject):
     """
-    Обрабатывает команду /start и deep links
-    Формат deep link: https://t.me/bot?start=00-00351422
-    где 00-00351422 - артикул товара
+    Обробляє команду /start та диплінки.
+    Формат диплінку: https://t.me/bot?start=00-00351422
+    де 00-00351422 - артикул товару.
     """
     try:
-        # Получаем или создаем пользователя
+        # Отримуємо або створюємо користувача
         user_id = message.from_user.id
-        user_name = message.from_user.full_name  # Получаем полное имя пользователя
+        user_name = message.from_user.full_name  # Отримуємо повне ім'я користувача
 
-        logger.info(f"Processing /start command for user {user_id} ({user_name})")
+        logger.info(f"Обробка команди /start для користувача {user_id} ({user_name})")
 
-        # Создаем или получаем пользователя
+        # Реєструємо/оновлюємо інформацію про користувача
         await set_user(user_id, user_name)
-        logger.debug(f"User {user_id} registered in database")
+        logger.debug(f"Користувач {user_id} зареєстрований у базі даних")
 
-        # Получаем параметр из команды start
+        # Отримуємо параметр із команди /start
         article = command.args
 
         if article:
-            # Если есть артикул, показываем информацию о товаре
-            product_info = product_manager.get_product_info(article)
-            if product_info:
-                name, price, available = product_info
+            # Якщо є артикул, виводимо інформацію про товар
+            product_details = product_manager.get_product_details(article)
+            if product_details:
+                name = product_details["name"]
+                price = product_details["price"]
+                specifications = product_details["specifications"]
 
-                # Проверяем, есть ли товар в корзине
-                user_cart = await cart.get_cart(message.from_user.id)
-                in_cart = user_cart and article in user_cart
+                # Формуємо повідомлення з інформацією про товар
+                text = f"📦 {name}\nАртикул: {article}\n💰 Ціна: {price:.2f} грн.\n\n"
 
-                # Формируем сообщение с информацией о товаре
-                text = (
-                    f"📦 {name}\n"
-                    f"Артикул: {article}\n"
-                    f"💰 Ціна: {price:.2f} грн.\n"
-                    f"📊 В наявності: {available} шт.\n\n"
-                    f"Щоб додати товар до кошика, натисніть кнопку нижче 👇"
-                )
+                if len(specifications) > 1:
+                    text += "🗂 Розміри/кольори:\n"
+                    for spec in specifications:
+                        text += f"🔘 {spec['specification']}\n📊 В наявності: {spec['quantity']} шт.\n\n"
+                else:
+                    spec = specifications[0]
+                    text += f"📊 В наявності: {spec['quantity']} шт.\n\n"
 
+                text += "Щоб додати товар до кошика, натисніть кнопку нижче 👇"
+
+                # Відповідаємо користувачу
                 await message.answer(
                     text,
-                    reply_markup=get_product_keyboard(article, in_cart)
+                    reply_markup=get_product_keyboard(article, in_cart=False)
                 )
                 return
 
-        # Если артикула нет или он не найден, показываем главное меню
+        # Якщо артикула немає або його не знайдено, показуємо головне меню
         await message.answer(
             f"👋 Вітаємо у нашому магазині!\n\n"
-            f"Вас вітає магазин \"Твій Стиль\"\n\n"
+            f"🆔 Ваш ID: {message.from_user.id}\n\n"
             f"Оберіть потрібний розділ:",
             reply_markup=get_main_keyboard()
         )
 
     except Exception as e:
-        logger.error(f"Error processing /start command: {str(e)}", exc_info=True)
+        logger.error(f"Помилка обробки команди /start: {str(e)}", exc_info=True)
         await message.answer(
-            "Виникла помилка при реєстрації. Будь ласка, спробуйте ще раз або зверніться до підтримки."
+            "Виникла помилка при обробці запиту. Будь ласка, спробуйте ще раз або зверніться до підтримки."
         )
 
 
@@ -108,27 +111,35 @@ async def process_back_to_main(callback: CallbackQuery):
 @user.message(F.text)
 async def handle_article(message: Message):
     try:
-        article = message.text.strip()  # Убираем лишние пробелы
+        article = message.text.strip()
 
-        product_info = product_manager.get_product_info(article)
+        product_details = product_manager.get_product_details(article)
 
-        if product_info is None:
+        if product_details is None:
             await message.answer("❌ Товару з таким артикулом не знайдено.")
             return
 
-        name, price, quantity = product_info
+        # Формуємо відповідь
+        name = product_details["name"]
+        article = product_details["article"]
+        price = product_details["price"]
+        specifications = product_details["specifications"]
 
-        response = (
-            f"📦 Товар: {name}\n"
-            f"💵 Ціна: {price:.2f} грн.\n"
-            f"📊 В наявності: {quantity} шт."
-        )
+        response = f"📦 {name}\nАртикул: {article}\n💰 Ціна: {price:.2f} грн.\n\n"
+
+        if len(specifications) > 1:
+            response += "🗂 Розміри/кольори:\n"
+            for spec in specifications:
+                response += f"🔘 {spec['specification']}\n📊 В наявності: {spec['quantity']} шт.\n\n"
+        else:
+            spec = specifications[0]
+            response += f"📊 В наявності: {spec['quantity']} шт.\n"
 
         await message.answer(response)
+
     except Exception as e:
-        await message.answer("❌ Виникла помилка про пошуку товару. Спробуйте пізніше.")
-        # Логирование ошибки
-        print(f"Error in handle_article: {e}")
+        await message.answer("❌ Виникла помилка під час обробки запиту. Спробуйте пізніше.")
+        print(f"Помилка у handle_article: {e}")
 
 
 @user.callback_query(F.data.startswith("add_to_cart_"))
