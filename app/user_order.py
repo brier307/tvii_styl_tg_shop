@@ -457,7 +457,7 @@ class OrderManager:
             cart_items = await self.cart.get_cart(message.from_user.id)
             items_text = []
             for article in cart_items.keys():
-                product_data = self.product_manager.get_grouped_products(article)
+                product_data = self.product_manager.get_product_details(article)
                 if product_data:
                     items_text.append(f"📦 {product_data['name']}\n")
                     for spec in product_data["specifications"]:
@@ -481,8 +481,13 @@ class OrderManager:
     async def process_comment(self, message: Message, state: FSMContext):
         """Обробка введення коментаря користувачем."""
         try:
-            # Збереження коментаря в стані FSM
-            await state.update_data(comment=message.text.strip())
+            # Якщо користувач вирішив пропустити коментар, зберігаємо пусте значення
+            if message.text.strip().lower() in {"пропустити", "skip"}:
+                logger.info(f"User {message.from_user.id} chose to skip the comment step.")
+                await state.update_data(comment="")
+            else:
+                # Збереження коментаря в стані FSM
+                await state.update_data(comment=message.text.strip())
 
             # Перехід до стану вибору методу оплати
             await state.set_state(OrderStates.PAYMENT_METHOD)
@@ -498,8 +503,17 @@ class OrderManager:
             logger.error(f"Error in process_comment: {e}", exc_info=True)
             await message.answer(
                 "❌ Виникла помилка при обробці коментаря. Спробуйте ще раз.",
-                reply_markup=self.create_back_keyboard()
+                reply_markup=self.create_comment_navigation_keyboard()
             )
+
+    @staticmethod
+    def create_comment_navigation_keyboard() -> InlineKeyboardMarkup:
+        """Створює клавіатуру для навігації на кроці з коментарем."""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустити", callback_data="skip_comment")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="order_back")],
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="order_cancel")]
+        ])
 
     async def cancel_order(self, callback: CallbackQuery, state: FSMContext):
         """Отменяет создание заказа"""
