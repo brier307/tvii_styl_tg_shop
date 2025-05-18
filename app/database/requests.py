@@ -91,7 +91,8 @@ async def create_order(
         phone: str,
         delivery: DeliveryMethod,
         address: str,
-        payment_method: str
+        payment_method: str,
+        comment: Optional[str] = None  # <-- Добавлен параметр comment
 ) -> Optional[Order]:
     """
     Створює нове замовлення у базі даних.
@@ -104,7 +105,7 @@ async def create_order(
         delivery (DeliveryMethod): Спосіб доставки (enum)
         address (str): Адреса доставки
         payment_method (str): Спосіб оплати
-
+        comment (Optional[str]): Коментар до замовлення  # <-- Добавлено описание
     Returns:
         Optional[Order]: Створене замовлення або None у разі помилки
     """
@@ -144,9 +145,10 @@ async def create_order(
                 delivery=delivery.value,
                 address=address,
                 payment_method=payment_method,
-                date=current_time,  # Використовуємо дату з часовим поясом UTC+3
+                date=current_time,
                 status=OrderStatus.NEW.value,
-                total_price=total_price  # Зберігаємо суму замовлення
+                total_price=total_price,
+                comment=comment  # <-- Сохраняем комментарий
             )
 
             # Додаємо замовлення до сесії

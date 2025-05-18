@@ -26,7 +26,6 @@ from config import ADMIN
 
 ORDERS_PER_PAGE = 5  # Количество заказов на одной странице
 
-
 # Настройка логгера
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -95,6 +94,11 @@ class OrderManager:
         self.router.message.register(  # Register handler for the new comment step
             self.process_comment,
             OrderStates.COMMENT
+        )
+        self.router.callback_query.register(
+            self.skip_comment_handler,
+            OrderStates.COMMENT,  # Важно указать состояние
+            F.data == "skip_comment"
         )
         self.router.callback_query.register(
             self.process_payment_method,
@@ -168,6 +172,15 @@ class OrderManager:
                                   callback_data="order_cancel")]
         ])
         return keyboard
+
+    @staticmethod
+    def create_comment_navigation_keyboard() -> InlineKeyboardMarkup:
+        """Створює клавіатуру для навігації на кроці з коментарем."""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Пропустити", callback_data="skip_comment")],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="order_back")],
+            [InlineKeyboardButton(text="❌ Скасувати", callback_data="order_cancel")]
+        ])
 
     @staticmethod
     def validate_phone(phone: str) -> bool:
@@ -432,88 +445,107 @@ class OrderManager:
     async def process_phone_number(self, message: Message, state: FSMContext):
         """Обробляє введення номера телефону користувачем."""
         try:
-            # Отримання номера телефону: через контакт або текст
             if message.contact:
                 phone = message.contact.phone_number
             else:
                 phone = message.text.strip()
 
-            # Перевірка валідності номера телефону
             if not self.validate_phone(phone):
                 await message.answer(
                     "❌ Некоректний номер телефону. "
                     "Будь ласка, введіть номер у форматі +380XXXXXXXXX:",
-                    reply_markup=self.create_back_keyboard()
+                    reply_markup=self.create_back_keyboard()  # Оставляем для повторного ввода
                 )
                 return
 
-            # Збереження номера телефону в стані FSM
             await state.update_data(phone=phone)
-
-            # Перехід до стану введення коментаря
             await state.set_state(OrderStates.COMMENT)
 
-            # Отримання товарів у кошику
             cart_items = await self.cart.get_cart(message.from_user.id)
-            items_text = []
-            for article in cart_items.keys():
-                product_data = self.product_manager.get_product_details(article)
-                if product_data:
-                    items_text.append(f"📦 {product_data['name']}\n")
-                    for spec in product_data["specifications"]:
-                        items_text.append(f"🔘 {spec['specification']}\n📊 В наявності: {spec['quantity']} шт.\n")
-            items_text = "\n".join(items_text)
+            items_text_list = []
+            if cart_items:  # Проверяем, что корзина не пуста
+                for article, quantity in cart_items.items():  # Итерируем по товарам и количеству
+                    product_data = self.product_manager.get_product_details(article)
+                    if product_data:
+                        # Формируем строку с названием товара и его характеристиками (если есть)
+                        item_desc = f"📦 {product_data['name']}"
+                        # Если есть спецификации и их больше одной или единственная непустая
+                        if product_data["specifications"] and \
+                                (len(product_data["specifications"]) > 1 or product_data["specifications"][0][
+                                    'specification']):
+                            specs_texts = [spec['specification'] for spec in product_data["specifications"] if
+                                           spec['specification']]
+                            if specs_texts:
+                                item_desc += f" ({', '.join(specs_texts)})"
+                        item_desc += f" - {quantity} шт."
+                        items_text_list.append(item_desc)
 
-            # Повідомлення користувачу зі списком товарів і запитом на коментар
+            items_text_for_message = "\n".join(items_text_list)
+            prompt_message = "Введіть коментар до замовлення (наприклад, уточнення кольору/розміру) або натисніть 'Пропустити'."
+            if items_text_for_message:
+                prompt_message = f"Ваші товари:\n{items_text_for_message}\n\n{prompt_message}"
+
+            # Убираем ReplyKeyboardRemove, так как мы теперь используем Inline кнопку для пропуска
             await message.answer(
-                f"Введіть коментар до замовлення (наприклад, уточнення кольору/розміру):\n\n{items_text}",
-                reply_markup=ReplyKeyboardRemove()
+                text=prompt_message,
+                reply_markup=self.create_comment_navigation_keyboard()  # Используем новую клавиатуру
             )
+            # Если перед этим была клавиатура запроса контакта, ее нужно убрать
+            await message.answer("↓", reply_markup=ReplyKeyboardRemove())
+
 
         except Exception as e:
-            # Обробка помилок
             logger.error(f"Error in process_phone_number: {e}", exc_info=True)
             await message.answer(
                 "❌ Виникла помилка при обробці номера телефону. Спробуйте ще раз.",
+                # Клавиатура для возврата к предыдущему шагу (ввод имени)
+                # или общая клавиатура отмены/возврата
                 reply_markup=self.create_back_keyboard()
             )
 
     async def process_comment(self, message: Message, state: FSMContext):
-        """Обробка введення коментаря користувачем."""
+        """Обробка введення коментаря користувачем (текстом)."""
         try:
-            # Якщо користувач вирішив пропустити коментар, зберігаємо пусте значення
-            if message.text.strip().lower() in {"пропустити", "skip"}:
-                logger.info(f"User {message.from_user.id} chose to skip the comment step.")
-                await state.update_data(comment="")
-            else:
-                # Збереження коментаря в стані FSM
-                await state.update_data(comment=message.text.strip())
+            # Пользователь ввел комментарий текстом
+            comment_text = message.text.strip()
+            logger.info(f"User {message.from_user.id} entered comment: {comment_text}")
+            await state.update_data(comment=comment_text) # Сохранение коментария
 
-            # Перехід до стану вибору методу оплати
+            await state.set_state(OrderStates.PAYMENT_METHOD)
+            await message.answer( # Отправляем новым сообщением, т.к. предыдущее было с инлайн клавиатурой
+                "Дякуємо! Тепер оберіть спосіб оплати:",
+                reply_markup=self.create_payment_keyboard()
+            )
+        except Exception as e:
+            logger.error(f"Error in process_comment: {e}", exc_info=True)
+            await message.answer(
+                "❌ Виникла помилка при обробці коментаря. Спробуйте ще раз.",
+                reply_markup=self.create_comment_navigation_keyboard() # Даем возможность снова использовать кнопки
+            )
+
+    async def skip_comment(self, callback: CallbackQuery, state: FSMContext):
+        """Обробник для пропуску введення коментаря."""
+        try:
+            logger.info(f"User {callback.from_user.id} skipped comment entry")
+
+            # Зберігаємо порожній коментар
+            await state.update_data(comment="")
+
+            # Переходимо до стану вибору способу оплати
             await state.set_state(OrderStates.PAYMENT_METHOD)
 
-            # Повідомлення користувачу про наступний крок
-            await message.answer(
-                "Дякуємо! Тепер оберіть спосіб оплати:",
+            # Відповідаємо користувачу з клавіатурою вибору способу оплати
+            await callback.message.edit_text(
+                "Оберіть спосіб оплати:",
                 reply_markup=self.create_payment_keyboard()
             )
 
         except Exception as e:
-            # Обробка помилок
-            logger.error(f"Error in process_comment: {e}", exc_info=True)
-            await message.answer(
-                "❌ Виникла помилка при обробці коментаря. Спробуйте ще раз.",
-                reply_markup=self.create_comment_navigation_keyboard()
+            logger.error(f"Error in skip_comment: {e}", exc_info=True)
+            await callback.message.edit_text(
+                "❌ Виникла помилка. Спробуйте ще раз.",
+                reply_markup=self.create_back_keyboard()
             )
-
-    @staticmethod
-    def create_comment_navigation_keyboard() -> InlineKeyboardMarkup:
-        """Створює клавіатуру для навігації на кроці з коментарем."""
-        return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Пропустити", callback_data="skip_comment")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="order_back")],
-            [InlineKeyboardButton(text="❌ Скасувати", callback_data="order_cancel")]
-        ])
 
     async def cancel_order(self, callback: CallbackQuery, state: FSMContext):
         """Отменяет создание заказа"""
@@ -529,8 +561,27 @@ class OrderManager:
 
     async def process_back(self, callback: CallbackQuery, state: FSMContext):
         """Handles returning to the previous step"""
-        current_state = await state.get_state()
-        logger.info(f"User {callback.from_user.id} triggered 'Back' from state: {current_state}")
+        current_state_str = await state.get_state() # Получаем строковое представление состояния
+        logger.info(f"User {callback.from_user.id} triggered 'Back' from state: {current_state_str}")
+
+        # Получаем объект состояния из строки для сравнения
+        current_state = None
+        if current_state_str == OrderStates.NOVA_POSHTA_CITY.state:
+            current_state = OrderStates.NOVA_POSHTA_CITY
+        elif current_state_str == OrderStates.NOVA_POSHTA_OFFICE.state:
+            current_state = OrderStates.NOVA_POSHTA_OFFICE
+        elif current_state_str == OrderStates.UKRPOSHTA_INDEX.state:
+            current_state = OrderStates.UKRPOSHTA_INDEX
+        elif current_state_str == OrderStates.RECIPIENT_NAME.state:
+            current_state = OrderStates.RECIPIENT_NAME
+        elif current_state_str == OrderStates.PHONE_NUMBER.state:
+            current_state = OrderStates.PHONE_NUMBER
+        elif current_state_str == OrderStates.COMMENT.state: # Добавляем состояние COMMENT
+            current_state = OrderStates.COMMENT
+        elif current_state_str == OrderStates.PAYMENT_METHOD.state:
+            current_state = OrderStates.PAYMENT_METHOD
+        elif current_state_str == OrderStates.CONFIRMATION.state:
+            current_state = OrderStates.CONFIRMATION
 
         # Mapping of states for returning to the previous step
         states_map = {
@@ -559,10 +610,23 @@ class OrderManager:
                 "message": "Введіть ПІБ отримувача:",
                 "keyboard": self.create_back_keyboard()
             },
-            OrderStates.PAYMENT_METHOD: {
+            OrderStates.COMMENT: {  # Новый кейс для возврата с шага комментария
                 "state": OrderStates.PHONE_NUMBER,
-                "message": "Введіть номер телефону:",
-                "keyboard": self.create_back_keyboard()
+                "message": "📱 Натисніть кнопку 'Поділитися контактом' або введіть номер телефону вручну:\n"
+                           "⬅️ Для повернення або скасування використовуйте кнопки нижче:",
+                # Возвращаем оба сообщения или адаптируем
+                "keyboard": self.create_back_keyboard()  # Или специфичная клавиатура для ввода телефона
+                # Тут нужно продумать, как восстановить клавиатуру с "Поделиться контактом"
+                # Для простоты можно просто self.create_back_keyboard() и юзер введет вручную.
+                # Либо придется переотправлять сообщение с ReplyKeyboard для контакта + Inline для навигации.
+                # Пока оставим create_back_keyboard для текстового сообщения.
+            },
+            OrderStates.PAYMENT_METHOD: {
+                "state": OrderStates.COMMENT,
+                "message": "Введіть коментар до замовлення (наприклад, уточнення кольору/розміру) або натисніть 'Пропустити':",
+                # Здесь нужно также отобразить товары, если это делалось на шаге комментария.
+                # Для упрощения, можно просто запросить комментарий.
+                "keyboard": self.create_comment_navigation_keyboard()
             },
             OrderStates.CONFIRMATION: {
                 "state": OrderStates.PAYMENT_METHOD,
@@ -584,17 +648,48 @@ class OrderManager:
             await state.set_state(new_state)
 
             # Убираем клавиатуру с кнопкой контакта если она есть
-            if current_state == OrderStates.PHONE_NUMBER:
+            if current_state in [OrderStates.PHONE_NUMBER, OrderStates.COMMENT]:
                 await callback.message.answer(
                     "Повернення до попереднього кроку...",
                     reply_markup=ReplyKeyboardRemove()
                 )
 
-            # Update the message and keyboard
+            # Особое условие для возврата на шаг PHONE_NUMBER
+            if new_state == OrderStates.PHONE_NUMBER:
+                await callback.message.delete()  # Удаляем текущее сообщение (где был ввод коммента)
+                # Заново вызываем логику отправки сообщений для ввода телефона
+                temp_message_for_state = callback.message  # Используем существующий объект Message для контекста
+                temp_message_for_state.text = ""  # Очищаем текст, чтобы не было неожиданного поведения
+
+                # Логика из process_recipient_name для отправки запроса телефона
+                contact_keyboard = ReplyKeyboardMarkup(
+                    keyboard=[
+                        [KeyboardButton(text="📱 Поділитися контактом", request_contact=True)]
+                    ],
+                    resize_keyboard=True,
+                    one_time_keyboard=True
+                )
+                inline_keyboard_nav = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="order_back")],  # Назад к ФИО
+                    [InlineKeyboardButton(text="❌ Скасувати", callback_data="order_cancel")]
+                ])
+                await callback.message.answer(
+                    "📱 Натисніть кнопку 'Поділитися контактом' або введіть номер телефону вручну:",
+                    reply_markup=contact_keyboard
+                )
+                await callback.message.answer(
+                    "⬅️ Для повернення або скасування використовуйте кнопки нижче:",
+                    reply_markup=inline_keyboard_nav
+                )
+                logger.info(f"User {callback.from_user.id} successfully returned to state: {new_state}")
+                return  # Выходим, чтобы не было edit_text ниже
+
+                # Update the message and keyboard
             await callback.message.edit_text(
                 message_text,
                 reply_markup=keyboard
             )
+
             logger.info(f"User {callback.from_user.id} successfully returned to state: {new_state}")
         else:
             # If the state is not found, log a warning and reset to the main menu
@@ -605,6 +700,22 @@ class OrderManager:
                 "Повернення до головного меню...",
                 reply_markup=get_back_to_main_menu()
             )
+
+    async def skip_comment_handler(self, callback: CallbackQuery, state: FSMContext):
+        """Обрабатывает нажатие кнопки 'Пропустить' на шаге ввода комментария."""
+        try:
+            logger.info(f"User {callback.from_user.id} chose to skip the comment step via button.")
+            await state.update_data(comment="")  # Сохраняем пустой комментарий
+            await state.set_state(OrderStates.PAYMENT_METHOD)
+            await callback.message.edit_text(
+                "Дякуємо! Тепер оберіть спосіб оплати:",
+                reply_markup=self.create_payment_keyboard()
+            )
+            await callback.answer()
+        except Exception as e:
+            logger.error(f"Error in skip_comment_handler: {e}", exc_info=True)
+            await callback.message.answer("❌ Виникла помилка. Спробуйте ще раз.")
+            await callback.answer("Помилка")
 
     async def process_payment_method(self, callback: CallbackQuery, state: FSMContext):
         """Обрабатывает выбор способа оплаты"""
@@ -654,9 +765,8 @@ class OrderManager:
 
                 # Получаем enum по имени из сохраненных данных
                 delivery_method = DeliveryMethod[data['delivery_method']]
-                logger.debug(f"Delivery method enum for user {user_id}: {delivery_method}")
+                comment_text = data.get('comment')  # <-- Получаем комментарий из состояния
 
-                # Создаем заказ в базе данных
                 logger.info(f"Creating order in database for user {user_id}")
                 order = await create_order(
                     tg_id=user_id,
@@ -665,7 +775,8 @@ class OrderManager:
                     phone=data['phone'],
                     delivery=delivery_method,
                     address=data['address'],
-                    payment_method=data['payment_method']
+                    payment_method=data['payment_method'],
+                    comment=comment_text  # <-- Передаем комментарий
                 )
 
                 if order:
