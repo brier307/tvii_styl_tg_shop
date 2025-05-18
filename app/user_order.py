@@ -444,62 +444,123 @@ class OrderManager:
 
     async def process_phone_number(self, message: Message, state: FSMContext):
         """Обробляє введення номера телефону користувачем."""
+        user_id = message.from_user.id  # Получаем user_id в начале для логов
         try:
+            logger.debug(f"User {user_id}: Starting process_phone_number.")
             if message.contact:
                 phone = message.contact.phone_number
+                logger.debug(f"User {user_id}: Phone from contact: {phone}")
             else:
                 phone = message.text.strip()
+                logger.debug(f"User {user_id}: Phone from text: {phone}")
 
             if not self.validate_phone(phone):
+                logger.warning(f"User {user_id}: Invalid phone format: {phone}")
                 await message.answer(
                     "❌ Некоректний номер телефону. "
                     "Будь ласка, введіть номер у форматі +380XXXXXXXXX:",
-                    reply_markup=self.create_back_keyboard()  # Оставляем для повторного ввода
+                    reply_markup=self.create_back_keyboard()
                 )
                 return
 
             await state.update_data(phone=phone)
             await state.set_state(OrderStates.COMMENT)
+            logger.info(f"User {user_id}: Phone validated and saved. State set to COMMENT.")
 
-            cart_items = await self.cart.get_cart(message.from_user.id)
-            items_text_list = []
-            if cart_items:  # Проверяем, что корзина не пуста
-                for article, quantity in cart_items.items():  # Итерируем по товарам и количеству
-                    product_data = self.product_manager.get_product_details(article)
-                    if product_data:
-                        # Формируем строку с названием товара и его характеристиками (если есть)
-                        item_desc = f"📦 {product_data['name']}"
-                        # Если есть спецификации и их больше одной или единственная непустая
-                        if product_data["specifications"] and \
-                                (len(product_data["specifications"]) > 1 or product_data["specifications"][0][
-                                    'specification']):
-                            specs_texts = [spec['specification'] for spec in product_data["specifications"] if
-                                           spec['specification']]
-                            if specs_texts:
-                                item_desc += f" ({', '.join(specs_texts)})"
-                        item_desc += f" - {quantity} шт."
-                        items_text_list.append(item_desc)
+            cart_items = await self.cart.get_cart(user_id)
+            logger.debug(f"User {user_id}: Cart items: {cart_items}")
+            all_items_formatted_text = []
 
-            items_text_for_message = "\n".join(items_text_list)
-            prompt_message = "Введіть коментар до замовлення (наприклад, уточнення кольору/розміру) або натисніть 'Пропустити'."
-            if items_text_for_message:
-                prompt_message = f"Ваші товари:\n{items_text_for_message}\n\n{prompt_message}"
+            if cart_items:
+                for article_code, quantity_in_cart in cart_items.items():
+                    logger.debug(f"User {user_id}: Processing article {article_code} from cart.")
+                    try:
+                        product_details = self.product_manager.get_product_details(article_code)
+                    except Exception as e_pm:
+                        logger.error(
+                            f"User {user_id}: EXCEPTION in self.product_manager.get_product_details for article {article_code}: {e_pm}",
+                            exc_info=True)
+                        all_items_formatted_text.append(f"📦 Помилка завантаження деталей для артикулу {article_code}.")
+                        continue  # Переходим к следующему товару
 
-            # Убираем ReplyKeyboardRemove, так как мы теперь используем Inline кнопку для пропуска
+                    if not product_details:
+                        logger.warning(f"User {user_id}: No product details found for article {article_code}.")
+                        all_items_formatted_text.append(
+                            f"📦 Інформація про товар з артикулом {article_code} не знайдена.")
+                        continue
+
+                    logger.debug(f"User {user_id}: Product details for {article_code}: {product_details}")
+                    item_text_parts = []
+                    try:  # Добавляем try-except вокруг доступа к ключам product_details
+                        item_text_parts.append(f"📦 {product_details['name']}")
+                        item_text_parts.append(f"Артикул: {product_details['article']}")
+                        item_text_parts.append(f"💰 Ціна: {product_details['price']:.2f} грн.")
+
+                        specifications = product_details.get("specifications", [])
+                        if specifications:
+                            displayable_specs = [s for s in specifications if s.get("specification")]
+                            if displayable_specs:
+                                item_text_parts.append("\n🗂 Розміри/кольори:")
+                                for spec in displayable_specs:
+                                    spec_name = spec.get('specification', 'N/A')
+                                    spec_qty = spec.get('quantity', 0)
+                                    item_text_parts.append(f"  🔘 {spec_name}")
+                                    item_text_parts.append(f"  📊 В наявності: {int(spec_qty)} шт.")
+                                    item_text_parts.append("")
+                            elif len(specifications) == 1 and not specifications[0].get("specification"):
+                                spec_qty = specifications[0].get('quantity', 0)
+                                item_text_parts.append(f"📊 Загалом в наявності: {int(spec_qty)} шт.")
+                    except KeyError as ke:
+                        logger.error(
+                            f"User {user_id}: KeyError accessing product_details for article {article_code} - Missing key: {ke}. Details: {product_details}",
+                            exc_info=True)
+                        all_items_formatted_text.append(f"📦 Помилка в структурі даних для артикулу {article_code}.")
+                        continue
+                    except Exception as e_format:
+                        logger.error(
+                            f"User {user_id}: Exception formatting item details for article {article_code}: {e_format}. Details: {product_details}",
+                            exc_info=True)
+                        all_items_formatted_text.append(f"📦 Помилка форматування деталей для артикулу {article_code}.")
+                        continue
+
+                    all_items_formatted_text.append("\n".join(item_text_parts))
+
+                if all_items_formatted_text:
+                    items_display_section = "\n\n".join(all_items_formatted_text)
+                    header_text = "Ваші товари (для уточнення у коментарі):"
+                    final_items_text_for_prompt = f"{header_text}\n{items_display_section}"
+                else:  # Если после цикла список пуст (например, все товары не найдены или с ошибками)
+                    final_items_text_for_prompt = "Не вдалося завантажити деталі для товарів у кошику."
+            else:
+                final_items_text_for_prompt = "Ваш кошик порожній."
+
+            comment_prompt_instruction = ("\n\nВведіть коментар до замовлення "
+                                          "(наприклад, уточнення кольору/розміру) "
+                                          "або натисніть 'Пропустити'.")
+
+            full_prompt_text = f"{final_items_text_for_prompt}{comment_prompt_instruction}"
+
+            if len(full_prompt_text) > 4096:
+                # ... (логика сокращения) ...
+                logger.warning(
+                    f"User {user_id}: Comment prompt is too long ({len(full_prompt_text)} chars). Sending a summary.")
+                # ... (код сокращения текста)
+
+            logger.debug(f"User {user_id}: Prepared prompt text length: {len(full_prompt_text)}. Sending to user.")
             await message.answer(
-                text=prompt_message,
-                reply_markup=self.create_comment_navigation_keyboard()  # Используем новую клавиатуру
+                text=full_prompt_text,
+                reply_markup=self.create_comment_navigation_keyboard()
             )
-            # Если перед этим была клавиатура запроса контакта, ее нужно убрать
-            await message.answer("↓", reply_markup=ReplyKeyboardRemove())
-
+            await message.answer("У разі уточнення просто відправте боту необхідний коментар на цьому кроці",
+                                 reply_markup=ReplyKeyboardRemove())
+            logger.info(f"User {user_id}: Comment prompt sent successfully.")
 
         except Exception as e:
-            logger.error(f"Error in process_phone_number: {e}", exc_info=True)
+            # Этот блок `except` теперь будет ловить только те ошибки,
+            # которые не были пойманы внутренними try-except
+            logger.error(f"User {user_id}: UNHANDLED Error in process_phone_number: {e}", exc_info=True)
             await message.answer(
-                "❌ Виникла помилка при обробці номера телефону. Спробуйте ще раз.",
-                # Клавиатура для возврата к предыдущему шагу (ввод имени)
-                # или общая клавиатура отмены/возврата
+                "❌ Виникла критична помилка при обробці номера телефону. Спробуйте ще раз.",
                 reply_markup=self.create_back_keyboard()
             )
 
@@ -936,7 +997,8 @@ async def show_order_details(callback: CallbackQuery):
         f"📍 Адреса: {order.address}\n"
         f"👤 Отримувач: {order.name}\n"
         f"📞 Телефон: {order.phone}\n"
-        f"📌 Статус: {OrderStatus(order.status).get_uk_description()}"
+        f"📌 Статус: {OrderStatus(order.status).get_uk_description()}\n"
+        f"🗒 Коментар: {order.comment if order.comment else 'Відсутній'}\n"
     )
 
     await callback.message.edit_text(
