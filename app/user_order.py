@@ -561,12 +561,15 @@ class OrderManager:
 
     async def process_back(self, callback: CallbackQuery, state: FSMContext):
         """Handles returning to the previous step"""
-        current_state_str = await state.get_state() # Получаем строковое представление состояния
-        logger.info(f"User {callback.from_user.id} triggered 'Back' from state: {current_state_str}")
+        current_state_str = await state.get_state()
+        user_id = callback.from_user.id
+        logger.info(f"User {user_id} triggered 'Back' from state: {current_state_str}")
 
-        # Получаем объект состояния из строки для сравнения
         current_state = None
-        if current_state_str == OrderStates.NOVA_POSHTA_CITY.state:
+        # Преобразуем строковое представление состояния в объект состояния
+        if current_state_str == OrderStates.DELIVERY_METHOD.state:
+            current_state = OrderStates.DELIVERY_METHOD  # Хотя сюда мы не должны попадать с кнопкой "Назад" из этого FSM
+        elif current_state_str == OrderStates.NOVA_POSHTA_CITY.state:
             current_state = OrderStates.NOVA_POSHTA_CITY
         elif current_state_str == OrderStates.NOVA_POSHTA_OFFICE.state:
             current_state = OrderStates.NOVA_POSHTA_OFFICE
@@ -576,14 +579,32 @@ class OrderManager:
             current_state = OrderStates.RECIPIENT_NAME
         elif current_state_str == OrderStates.PHONE_NUMBER.state:
             current_state = OrderStates.PHONE_NUMBER
-        elif current_state_str == OrderStates.COMMENT.state: # Добавляем состояние COMMENT
+        elif current_state_str == OrderStates.COMMENT.state:
             current_state = OrderStates.COMMENT
         elif current_state_str == OrderStates.PAYMENT_METHOD.state:
             current_state = OrderStates.PAYMENT_METHOD
         elif current_state_str == OrderStates.CONFIRMATION.state:
             current_state = OrderStates.CONFIRMATION
 
-        # Mapping of states for returning to the previous step
+        if current_state is None and current_state_str is not None:
+            logger.warning(f"User {user_id} back from an unknown state string: {current_state_str}")
+            await state.clear()
+            await callback.message.edit_text(
+                "Помилка стану. Повернення до головного меню...",
+                reply_markup=get_back_to_main_menu()  # Убедитесь, что эта функция импортирована
+            )
+            await callback.answer()
+            return
+        elif current_state is None and current_state_str is None:
+            # Состояние уже очищено или не установлено, просто выходим в главное меню
+            logger.info(f"User {user_id} back from a cleared state. To main menu.")
+            await callback.message.edit_text(
+                "Повернення до головного меню...",
+                reply_markup=get_back_to_main_menu()  # Убедитесь, что эта функция импортирована
+            )
+            await callback.answer()
+            return
+
         states_map = {
             OrderStates.NOVA_POSHTA_CITY: {
                 "state": OrderStates.DELIVERY_METHOD,
@@ -600,35 +621,32 @@ class OrderManager:
                 "message": "Оберіть спосіб доставки:",
                 "keyboard": self.create_delivery_keyboard()
             },
-            OrderStates.RECIPIENT_NAME: {
-                "state": OrderStates.DELIVERY_METHOD,
+            OrderStates.RECIPIENT_NAME: {  # Назад с ввода ФИО
+                "state": OrderStates.DELIVERY_METHOD,  # Возврат к выбору способа доставки (или конкретному шагу адреса)
+                # Зависит от того, куда логичнее. Сейчас - к выбору доставки.
+                # Если был самовывоз, то это корректно.
+                # Если НП/УП, то можно было бы на предыдущий шаг адреса.
+                # Для упрощения - к выбору доставки.
                 "message": "Оберіть спосіб доставки:",
                 "keyboard": self.create_delivery_keyboard()
             },
-            OrderStates.PHONE_NUMBER: {
+            OrderStates.PHONE_NUMBER: {  # Назад с ввода телефона
                 "state": OrderStates.RECIPIENT_NAME,
                 "message": "Введіть ПІБ отримувача:",
                 "keyboard": self.create_back_keyboard()
             },
-            OrderStates.COMMENT: {  # Новый кейс для возврата с шага комментария
+            OrderStates.COMMENT: {  # Назад с ввода комментария
                 "state": OrderStates.PHONE_NUMBER,
-                "message": "📱 Натисніть кнопку 'Поділитися контактом' або введіть номер телефону вручну:\n"
-                           "⬅️ Для повернення або скасування використовуйте кнопки нижче:",
-                # Возвращаем оба сообщения или адаптируем
-                "keyboard": self.create_back_keyboard()  # Или специфичная клавиатура для ввода телефона
-                # Тут нужно продумать, как восстановить клавиатуру с "Поделиться контактом"
-                # Для простоты можно просто self.create_back_keyboard() и юзер введет вручную.
-                # Либо придется переотправлять сообщение с ReplyKeyboard для контакта + Inline для навигации.
-                # Пока оставим create_back_keyboard для текстового сообщения.
+                "message": "Повернення до введення номеру телефону...",
+                # Это сообщение не будет показано, т.к. özel işlem
+                "keyboard": None  # Клавиатура не используется, так как будет специальная обработка
             },
-            OrderStates.PAYMENT_METHOD: {
+            OrderStates.PAYMENT_METHOD: {  # Назад с выбора способа оплаты
                 "state": OrderStates.COMMENT,
                 "message": "Введіть коментар до замовлення (наприклад, уточнення кольору/розміру) або натисніть 'Пропустити':",
-                # Здесь нужно также отобразить товары, если это делалось на шаге комментария.
-                # Для упрощения, можно просто запросить комментарий.
                 "keyboard": self.create_comment_navigation_keyboard()
             },
-            OrderStates.CONFIRMATION: {
+            OrderStates.CONFIRMATION: {  # Назад с подтверждения заказа
                 "state": OrderStates.PAYMENT_METHOD,
                 "message": "Оберіть спосіб оплати:",
                 "keyboard": self.create_payment_keyboard()
@@ -636,32 +654,23 @@ class OrderManager:
         }
 
         if current_state in states_map:
-            # Get the new state, message text, and keyboard
             config = states_map[current_state]
             new_state = config["state"]
             message_text = config["message"]
             keyboard = config["keyboard"]
 
-            logger.info(f"Returning user {callback.from_user.id} to state: {new_state}")
-
-            # Update the state
             await state.set_state(new_state)
+            logger.info(f"User {user_id} state set to {new_state.state if hasattr(new_state, 'state') else new_state}")
 
-            # Убираем клавиатуру с кнопкой контакта если она есть
-            if current_state in [OrderStates.PHONE_NUMBER, OrderStates.COMMENT]:
-                await callback.message.answer(
-                    "Повернення до попереднього кроку...",
-                    reply_markup=ReplyKeyboardRemove()
-                )
+            # Специальная обработка для возврата на шаг ввода номера телефона
+            if new_state == OrderStates.PHONE_NUMBER and current_state == OrderStates.COMMENT:
+                try:
+                    # Удаляем сообщение с запросом комментария
+                    await callback.message.delete()
+                except Exception as e:
+                    logger.warning(f"Could not delete message on back to phone input: {e}")
 
-            # Особое условие для возврата на шаг PHONE_NUMBER
-            if new_state == OrderStates.PHONE_NUMBER:
-                await callback.message.delete()  # Удаляем текущее сообщение (где был ввод коммента)
-                # Заново вызываем логику отправки сообщений для ввода телефона
-                temp_message_for_state = callback.message  # Используем существующий объект Message для контекста
-                temp_message_for_state.text = ""  # Очищаем текст, чтобы не было неожиданного поведения
-
-                # Логика из process_recipient_name для отправки запроса телефона
+                # Восстанавливаем интерфейс для ввода номера телефона
                 contact_keyboard = ReplyKeyboardMarkup(
                     keyboard=[
                         [KeyboardButton(text="📱 Поділитися контактом", request_contact=True)]
@@ -669,37 +678,62 @@ class OrderManager:
                     resize_keyboard=True,
                     one_time_keyboard=True
                 )
-                inline_keyboard_nav = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="order_back")],  # Назад к ФИО
+                # Клавиатура навигации для шага ввода телефона (Назад к ФИО, Отмена)
+                phone_step_nav_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="order_back")],
+                    # Эта кнопка поведет с PHONE_NUMBER на RECIPIENT_NAME
                     [InlineKeyboardButton(text="❌ Скасувати", callback_data="order_cancel")]
                 ])
-                await callback.message.answer(
+
+                await callback.message.answer(  # Используем answer для отправки нового сообщения
                     "📱 Натисніть кнопку 'Поділитися контактом' або введіть номер телефону вручну:",
                     reply_markup=contact_keyboard
                 )
-                await callback.message.answer(
+                await callback.message.answer(  # Используем answer для отправки нового сообщения
                     "⬅️ Для повернення або скасування використовуйте кнопки нижче:",
-                    reply_markup=inline_keyboard_nav
+                    reply_markup=phone_step_nav_keyboard
                 )
-                logger.info(f"User {callback.from_user.id} successfully returned to state: {new_state}")
-                return  # Выходим, чтобы не было edit_text ниже
+                await callback.answer()
+                return  # Выходим, чтобы не выполнять edit_text ниже
 
-                # Update the message and keyboard
-            await callback.message.edit_text(
-                message_text,
-                reply_markup=keyboard
-            )
+            # Если мы возвращаемся С шага ввода телефона (например, на ввод ФИО),
+            # нужно убрать клавиатуру "Поделиться контактом"
+            if current_state == OrderStates.PHONE_NUMBER:
+                try:
+                    # Отправляем сообщение с ReplyKeyboardRemove, чтобы убрать клавиатуру "Поделиться контактом"
+                    # Это может быть неидеально, если пользователь уже успел что-то нажать.
+                    # Лучше всего, если `process_recipient_name` всегда убирает ReplyKeyboard перед отправкой своего сообщения.
+                    # Но для явного действия при возврате:
+                    await callback.message.answer(" ",
+                                                  reply_markup=ReplyKeyboardRemove())  # Отправляем пустое сообщение для удаления клавиатуры
+                    # или изменяем текст следующего сообщения.
+                    logger.info(f"Removed reply keyboard when moving back from PHONE_NUMBER for user {user_id}")
+                except Exception as e:
+                    logger.warning(f"Could not send ReplyKeyboardRemove message: {e}")
 
-            logger.info(f"User {callback.from_user.id} successfully returned to state: {new_state}")
+            # Стандартное редактирование сообщения для остальных случаев "Назад"
+            try:
+                await callback.message.edit_text(
+                    message_text,
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error editing message on back for user {user_id} to state {new_state.state if hasattr(new_state, 'state') else new_state}: {e}")
+                # Если редактирование не удалось, можно попробовать отправить новое сообщение
+                await callback.message.answer(message_text, reply_markup=keyboard)
+
+            logger.info(
+                f"User {user_id} successfully returned to state: {new_state.state if hasattr(new_state, 'state') else new_state}")
+
         else:
-            # If the state is not found, log a warning and reset to the main menu
-            logger.warning(
-                f"User {callback.from_user.id} attempted to go back from an unhandled state: {current_state}")
+            logger.warning(f"User {user_id} attempted to go back from an unhandled state: {current_state_str}")
             await state.clear()
             await callback.message.edit_text(
                 "Повернення до головного меню...",
-                reply_markup=get_back_to_main_menu()
+                reply_markup=get_back_to_main_menu()  # Убедитесь, что эта функция импортирована
             )
+        await callback.answer()
 
     async def skip_comment_handler(self, callback: CallbackQuery, state: FSMContext):
         """Обрабатывает нажатие кнопки 'Пропустить' на шаге ввода комментария."""
