@@ -1024,6 +1024,9 @@ async def show_order_details(callback: CallbackQuery):
     if order.comment:  # Показуємо коментар і користувачу, якщо він є
         order_details_parts.append(f"💬 Ваш коментар: {order.comment}\n")
 
+    if order.tracking_number:
+        order_details_parts.append(f"🚚 Номер для відстеження: {order.tracking_number}\n")
+
     order_details_parts.extend([
         f"💳 Спосіб оплати: {order.payment_method}",
         f"🚚 Доставка: {order.delivery}",

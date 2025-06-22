@@ -79,7 +79,8 @@ class Order(Base):
         default=OrderStatus.NEW.value
     )
     total_price: Mapped[float] = mapped_column(nullable=False, default=0.0)
-    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Новый столбец
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tracking_number: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
     # Связь с пользователем
     user: Mapped["User"] = relationship("User", back_populates="orders")

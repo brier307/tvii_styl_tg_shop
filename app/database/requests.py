@@ -199,22 +199,28 @@ async def get_order(order_id: int) -> Optional[Order]:
         return result.scalar_one_or_none()
 
 
-async def update_order_status(order_id: int, status: OrderStatus) -> Optional[Order]:
+async def update_order_status(order_id: int, status: OrderStatus, tracking_number: Optional[int] = None) -> Optional[
+    Order]:
     """
-    Обновляет статус заказа.
+    Обновляет статус заказа и опционально номер отслеживания.
 
     Args:
         order_id (int): ID заказа.
         status (OrderStatus): Новый статус заказа.
+        tracking_number (Optional[int]): Номер для отслеживания (ТТН).
 
     Returns:
         Optional[Order]: Обновленный заказ или None, если обновление не удалось.
     """
     async with async_session() as session:
-        query = update(Order).where(Order.id == order_id).values(status=status.value)
+        values_to_update = {"status": status.value}
+        if tracking_number is not None:
+            values_to_update["tracking_number"] = tracking_number
+
+        query = update(Order).where(Order.id == order_id).values(**values_to_update)
         await session.execute(query)
         await session.commit()
-        return await get_order(order_id)  # Возвращаем обновленный заказ
+        return await get_order(order_id)
 
 
 async def get_user_orders(tg_id: int) -> List[Order]:

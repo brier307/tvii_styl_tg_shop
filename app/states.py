@@ -5,3 +5,7 @@ class RegExample(StatesGroup):
     name = State()
     number = State()
     location = State()
+
+
+class AdminOrderStates(StatesGroup):
+    EnterTrackingNumber = State()

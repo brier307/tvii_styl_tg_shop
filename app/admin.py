@@ -1,13 +1,16 @@
 import json
 from math import ceil
 from aiogram import Router, F
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Filter, CommandStart, Command
 from app.admin_keyboards import *
 from app.database.requests import get_all_orders, get_orders_by_status, get_order, update_order_status
 from app.database.products import ProductManager
 from app.database.models import OrderStatus
+from app.states import AdminOrderStates
 from config import ADMIN
+
 
 admin = Router()
 ORDERS_PER_PAGE = 10  # Кількість замовлень на одній сторінці
@@ -440,6 +443,12 @@ async def show_admin_order_details(callback: CallbackQuery):
     if order.comment and order.comment.strip():  # Перевіряємо, що коментар не порожній
         order_details_message += f"💬 <b>Коментар клієнта:</b> {order.comment}\n"
 
+    if order.tracking_number:
+        order_details_message += f"🔢 <b>Номер відправлення:</b> {order.tracking_number}\n"
+
+    order_details_message += f"\n💳 <b>Спосіб оплати:</b> {order.payment_method}\n"
+    order_details_message += f"🚚 <b>Доставка:</b> {order.delivery}\n"
+
     order_details_message += f"\n💳 <b>Спосіб оплати:</b> {order.payment_method}\n"
     order_details_message += f"🚚 <b>Доставка:</b> {order.delivery}\n"
     order_details_message += f"📍 <b>Адреса:</b> {order.address}\n"
@@ -458,7 +467,7 @@ async def edit_order_status(callback: CallbackQuery):
     """
     Виводить клавіатуру для зміни статусу замовлення.
     """
-    order_id = int(callback.data.split(":")[1])  # Отримуємо ID замовлення
+    order_id = int(callback.data.split(":")[1])
     keyboard = get_change_status_keyboard(order_id)
 
     await callback.message.edit_text(
@@ -468,62 +477,131 @@ async def edit_order_status(callback: CallbackQuery):
 
 
 @admin.callback_query(F.data.startswith("change_order_status:"))
-async def change_order_status(callback: CallbackQuery):
+async def change_order_status(callback: CallbackQuery, state: FSMContext):
     """
-    Обрабатывает изменение статуса заказа администратором и возвращает к информации о заказе.
-
-    Args:
-        callback (CallbackQuery): Запрос от администратора.
+    Обрабатывает изменение статуса заказа администратором.
+    Если статус "Отправлено", запрашивает трекинг-номер.
     """
     try:
-        # Извлечение информации из callback_data
-        _, order_id, new_status = callback.data.split(":")
-        order_id = int(order_id)
+        _, order_id_str, new_status_value = callback.data.split(":")
+        order_id = int(order_id_str)
+        new_status = OrderStatus(new_status_value)
 
-        # Обновление статуса заказа в базе данных
-        updated_order = await update_order_status(order_id, OrderStatus(new_status))
+        if new_status == OrderStatus.SHIPPED:
+            await state.update_data(order_id=order_id)
+            await state.set_state(AdminOrderStates.EnterTrackingNumber)
+            await callback.message.edit_text(
+                f"Введіть номер відправлення (ТТН) для замовлення #{order_id}:",
+                reply_markup=get_cancel_tracking_input_keyboard(order_id)
+            )
+            await callback.answer()
+            return
+
+        updated_order = await update_order_status(order_id, new_status)
 
         if not updated_order:
             await callback.answer("❌ Не вдалося оновити статус замовлення.", show_alert=True)
             return
 
-        # Отправка уведомления пользователю
-        user_id = updated_order.tg_id  # Получаем Telegram ID пользователя
+        user_id = updated_order.tg_id
         status_description = OrderStatus(new_status).get_uk_description()
-        notification_message = (
-            f"Статус Вашого замовлення #{order_id} змінено на: {status_description}"
-        )
-
-        # Отправка сообщения пользователю
+        notification_message = f"Статус Вашого замовлення #{order_id} змінено на: {status_description}"
         await callback.bot.send_message(chat_id=user_id, text=notification_message)
 
-        # Форматирование информации о заказе
-        articles = json.loads(updated_order.articles)
-        items_text = "\n".join(
-            [f"- {article}: {quantity} шт." for article, quantity in articles.items()]
+        # Оновлюємо вигляд деталей замовлення для адміна
+        # Замість зміни callback.data, відтворюємо логіку show_admin_order_details
+        await show_admin_order_details(callback)
+
+    except Exception as e:
+        # Уникаємо помилки MESSAGE_TOO_LONG, надсилаючи коротке повідомлення
+        print(f"Error in change_order_status: {e}")  # Для логування повної помилки в консоль
+        await callback.answer(f"⚠️ Відбулася помилка. Див. консоль.", show_alert=True)
+
+
+@admin.callback_query(F.data.startswith("cancel_tracking_input:"))
+async def cancel_tracking_input(callback: CallbackQuery, state: FSMContext):
+    """
+    Скасовує введення трекінг-номера, очищує стан та повертає до деталей замовлення.
+    """
+    await state.clear()
+    await show_admin_order_details(callback)
+
+
+@admin.message(AdminOrderStates.EnterTrackingNumber, F.text)
+async def process_tracking_number(message: Message, state: FSMContext):
+    """
+    Обрабатывает ввод трекинг-номера, обновляет заказ и уведомляет пользователя.
+    """
+    try:
+        data = await state.get_data()
+        order_id = data.get("order_id")
+
+        if not order_id:
+            await message.answer("Сталася помилка стану. Будь ласка, спробуйте знову змінити статус замовлення.")
+            await state.clear()
+            return
+
+        tracking_number_str = message.text.strip()
+        if not tracking_number_str.isdigit():
+            await message.answer("Номер відправлення повинен містити лише цифри. Спробуйте ще раз:")
+            return
+
+        tracking_number = int(tracking_number_str)
+
+        updated_order = await update_order_status(order_id, OrderStatus.SHIPPED, tracking_number)
+
+        if not updated_order:
+            await message.answer("❌ Не вдалося оновити статус замовлення. Спробуйте знову.")
+            await state.clear()
+            return
+
+        await state.clear()
+
+        user_id = updated_order.tg_id
+        status_description = OrderStatus.SHIPPED.get_uk_description()
+        notification_message = (
+            f"Статус Вашого замовлення #{order_id} змінено на: {status_description}.\n"
+            f"🚚 Ваш номер для відстеження (ТТН): {tracking_number}"
         )
+        await message.bot.send_message(chat_id=user_id, text=notification_message)
 
-        order_details = (
-            f"📦 <b>Деталі замовлення #{updated_order.id}</b>:\n\n"
-            f"📅 <b>Дата:</b> {updated_order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"🛒 <b>Товари:</b>\n{items_text}\n\n"
-            f"💰 <b>Сума замовлення:</b> {updated_order.total_price:.2f} грн\n"
-            f"💳 <b>Спосіб оплати:</b> {updated_order.payment_method}\n"
-            f"🚚 <b>Доставка:</b> {updated_order.delivery}\n"
-            f"📍 <b>Адреса:</b> {updated_order.address}\n"
-            f"👤 <b>Отримувач:</b> {updated_order.name}\n"
-            f"📞 <b>Телефон:</b> {updated_order.phone}\n"
-            f"📌 <b>Статус:</b> {OrderStatus(updated_order.status).get_uk_description()}"
-        )
+        await message.answer(f"✅ Статус замовлення #{order_id} оновлено на 'Відправлено', номер ТТН додано.")
 
-        # Получение клавиатуры для деталей заказа
-        keyboard = get_order_details_keyboard(order_id)
+        # Показуємо адміну оновлені деталі замовлення
+        product_manager_instance = ProductManager()
+        articles_dict = json.loads(updated_order.articles)
+        items_text_list = []
+        for article_code, quantity in articles_dict.items():
+            product_info = product_manager_instance.get_product_info(article_code)
+            product_name = product_info[0] if product_info else f"Артикул {article_code}"
+            items_text_list.append(f"- {product_name} (Арт: {article_code}): {quantity} шт.")
+        items_text = "\n".join(items_text_list)
 
-        # Обновление сообщения с информацией о заказе
-        await callback.message.edit_text(
-            order_details,
-            reply_markup=keyboard
+        order_details_message = f"📦 <b>Деталі замовлення #{updated_order.id}</b>:\n\n"
+        order_details_message += f"📅 <b>Дата:</b> {updated_order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        order_details_message += f"👤 <b>Отримувач:</b> {updated_order.name}\n"
+        order_details_message += f"📞 <b>Телефон:</b> {updated_order.phone}\n\n"
+        order_details_message += f"🛒 <b>Товари:</b>\n{items_text}\n\n"
+        order_details_message += f"💰 <b>Сума замовлення:</b> {updated_order.total_price:.2f} грн\n"
+
+        if updated_order.comment and updated_order.comment.strip():
+            order_details_message += f"💬 <b>Коментар клієнта:</b> {updated_order.comment}\n"
+
+        if updated_order.tracking_number:
+            order_details_message += f"🔢 <b>Номер відправлення:</b> {updated_order.tracking_number}\n"
+
+        order_details_message += f"\n💳 <b>Спосіб оплати:</b> {updated_order.payment_method}\n"
+        order_details_message += f"🚚 <b>Доставка:</b> {updated_order.delivery}\n"
+        order_details_message += f"📍 <b>Адреса:</b> {updated_order.address}\n"
+        order_details_message += f"📌 <b>Статус:</b> {OrderStatus(updated_order.status).get_uk_description()}"
+
+        await message.answer(
+            order_details_message,
+            reply_markup=get_order_details_keyboard(order_id),
+            parse_mode="HTML"
         )
 
     except Exception as e:
-        await callback.answer(f"⚠️ Произошла ошибка: {str(e)}", show_alert=True)
+        await message.answer(f"⚠️ Відбулася помилка: {str(e)}")
+    finally:
+        await state.clear()

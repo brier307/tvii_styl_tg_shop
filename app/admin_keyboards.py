@@ -207,3 +207,15 @@ def get_change_status_keyboard(order_id: int) -> InlineKeyboardMarkup:
 
     builder.adjust(1)  # Всі кнопки у стовпчик
     return builder.as_markup()
+
+
+def get_cancel_tracking_input_keyboard(order_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавіатура для скасування вводу трекінг-номера та повернення до деталей замовлення.
+    """
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="🔙 Повернутися",
+        callback_data=f"cancel_tracking_input:{order_id}"
+    )
+    return builder.as_markup()
