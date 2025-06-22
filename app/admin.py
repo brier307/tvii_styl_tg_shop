@@ -5,7 +5,8 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Filter, CommandStart, Command
 from app.admin_keyboards import *
 from app.database.requests import get_all_orders, get_orders_by_status, get_order, update_order_status
-
+from app.database.products import ProductManager
+from app.database.models import OrderStatus
 from config import ADMIN
 
 admin = Router()
@@ -384,9 +385,17 @@ async def show_admin_order_details(callback: CallbackQuery):
     """
     Універсальна функція для виводу деталей замовлення адміністраторами.
     """
-    order_id = int(callback.data.split(":")[1])  # Отримуємо ID замовлення з callback_data
+    try:
+        order_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        # Можна додати логування помилки тут, якщо потрібно
+        await callback.message.edit_text(
+            "❌ Помилка: Некоректний ID замовлення.",
+            reply_markup=get_back_to_orders_menu()  # Повернення до списку замовлень
+        )
+        await callback.answer()
+        return
 
-    # Отримуємо інформацію про замовлення
     order = await get_order(order_id)
 
     if not order:
@@ -394,31 +403,54 @@ async def show_admin_order_details(callback: CallbackQuery):
             "❌ Замовлення не знайдено.",
             reply_markup=get_back_to_orders_menu()
         )
+        await callback.answer()
         return
 
-    # Форматуємо інформацію про замовлення
-    articles = json.loads(order.articles)
-    items_text = "\n".join(
-        [f"- {article}: {quantity} шт." for article, quantity in articles.items()]
-    )
+    # Ініціалізуємо ProductManager
+    product_manager_instance = ProductManager()
 
-    order_details = (
-        f"📦 <b>Деталі замовлення #{order.id}</b>:\n\n"
-        f"📅 <b>Дата:</b> {order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"🛒 <b>Товари:</b>\n{items_text}\n\n"
-        f"💰 <b>Сума замовлення:</b> {order.total_price:.2f} грн\n"
-        f"💳 <b>Спосіб оплати:</b> {order.payment_method}\n"
-        f"🚚 <b>Доставка:</b> {order.delivery}\n"
-        f"📍 <b>Адреса:</b> {order.address}\n"
-        f"👤 <b>Отримувач:</b> {order.name}\n"
-        f"📞 <b>Телефон:</b> {order.phone}\n"
-        f"📌 <b>Статус:</b> {OrderStatus(order.status).get_uk_description()}"
-    )
+    try:
+        articles_dict = json.loads(order.articles)
+    except json.JSONDecodeError:
+        # Логування помилки
+        await callback.message.edit_text(
+            "❌ Помилка при завантаженні деталей товарів у замовленні.",
+            reply_markup=get_order_details_keyboard(order_id)  # Повернення до деталей з можливістю зміни статусу
+        )
+        await callback.answer()
+        return
+
+    items_text_list = []
+    for article_code, quantity in articles_dict.items():
+        product_info = product_manager_instance.get_product_info(article_code)
+        product_name = product_info[0] if product_info else f"Артикул {article_code}"
+        items_text_list.append(f"- {product_name} (Арт: {article_code}): {quantity} шт.")
+
+    items_text = "\n".join(items_text_list) if items_text_list else "Інформація про товари відсутня."
+
+    # Формуємо інформацію про замовлення
+    order_details_message = f"📦 <b>Деталі замовлення #{order.id}</b>:\n\n"
+    order_details_message += f"📅 <b>Дата:</b> {order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
+    order_details_message += f"👤 <b>Отримувач:</b> {order.name}\n"
+    order_details_message += f"📞 <b>Телефон:</b> {order.phone}\n\n"
+    order_details_message += f"🛒 <b>Товари:</b>\n{items_text}\n\n"
+    order_details_message += f"💰 <b>Сума замовлення:</b> {order.total_price:.2f} грн\n"
+
+    # Додаємо коментар, якщо він є
+    if order.comment and order.comment.strip():  # Перевіряємо, що коментар не порожній
+        order_details_message += f"💬 <b>Коментар клієнта:</b> {order.comment}\n"
+
+    order_details_message += f"\n💳 <b>Спосіб оплати:</b> {order.payment_method}\n"
+    order_details_message += f"🚚 <b>Доставка:</b> {order.delivery}\n"
+    order_details_message += f"📍 <b>Адреса:</b> {order.address}\n"
+    order_details_message += f"📌 <b>Статус:</b> {OrderStatus(order.status).get_uk_description()}"
 
     await callback.message.edit_text(
-        order_details,
-        reply_markup=get_order_details_keyboard(order_id)
+        order_details_message,
+        reply_markup=get_order_details_keyboard(order_id),
+        parse_mode="HTML"  # Важливо для відображення <b> тегів
     )
+    await callback.answer()
 
 
 @admin.callback_query(F.data.startswith("edit_order_status:"))

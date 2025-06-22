@@ -970,9 +970,17 @@ async def process_orders_pagination(callback: CallbackQuery):
 async def show_order_details(callback: CallbackQuery):
     """Обробляє запит на показ деталей замовлення"""
     user_id = callback.from_user.id
-    order_id = int(callback.data.split(":")[1])  # Отримуємо ID замовлення з callback_data
+    try:
+        order_id = int(callback.data.split(":")[1])
+    except (IndexError, ValueError):
+        logger.error(f"Invalid order_id in callback data: {callback.data} for user {user_id}")
+        await callback.message.edit_text(
+            "❌ Помилка: Некоректний ID замовлення.",
+            reply_markup=get_back_to_orders_menu()
+        )
+        await callback.answer()
+        return
 
-    # Отримуємо інформацію про замовлення
     order = await get_order(order_id)
 
     if not order or order.tg_id != user_id:
@@ -980,30 +988,56 @@ async def show_order_details(callback: CallbackQuery):
             "❌ Замовлення не знайдено або у вас немає доступу до цього замовлення.",
             reply_markup=get_back_to_orders_menu()
         )
+        await callback.answer()
         return
 
-    # Форматуємо інформацію про замовлення
-    articles = json.loads(order.articles)
-    items_text = "\n".join(
-        [f"- {article}: {quantity} шт." for article, quantity in articles.items()]
-    )
+    # Ініціалізуємо ProductManager
+    product_manager_instance = ProductManager()
 
-    order_details = (
-        f"📦 Деталі замовлення #{order.id}:\n\n"
-        f"📅 Дата: {order.date.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"🛒 Товари:\n{items_text}\n\n"
-        f"💳 Спосіб оплати: {order.payment_method}\n"
-        f"🚚 Доставка: {order.delivery}\n"
-        f"📍 Адреса: {order.address}\n"
-        f"👤 Отримувач: {order.name}\n"
-        f"📞 Телефон: {order.phone}\n"
-        f"📌 Статус: {OrderStatus(order.status).get_uk_description()}\n"
-        f"🗒 Коментар: {order.comment if order.comment else 'Відсутній'}\n"
-    )
+    try:
+        articles_dict = json.loads(order.articles)
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse articles JSON for order {order.id}: {order.articles}")
+        await callback.message.edit_text(
+            "❌ Помилка при завантаженні деталей товарів у замовленні.",
+            reply_markup=get_back_to_orders_menu()
+        )
+        await callback.answer()
+        return
+
+    items_text_list = []
+    for article_code, quantity in articles_dict.items():
+        product_info = product_manager_instance.get_product_info(article_code)
+        product_name = product_info[0] if product_info else f"Артикул {article_code}"
+        items_text_list.append(f"- {product_name} (Арт: {article_code}): {quantity} шт.")
+
+    items_text = "\n".join(items_text_list) if items_text_list else "Інформація про товари відсутня."
+
+    order_details_parts = [
+        f"📦 Деталі замовлення #{order.id}:\n",
+        f"📅 Дата: {order.date.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"👤 Отримувач: {order.name}",
+        f"📞 Телефон: {order.phone}\n",
+        f"🛒 Товари:\n{items_text}\n",
+    ]
+
+    if order.comment:  # Показуємо коментар і користувачу, якщо він є
+        order_details_parts.append(f"💬 Ваш коментар: {order.comment}\n")
+
+    order_details_parts.extend([
+        f"💳 Спосіб оплати: {order.payment_method}",
+        f"🚚 Доставка: {order.delivery}",
+        f"📍 Адреса: {order.address}",
+        f"📌 Статус: {OrderStatus(order.status).get_uk_description()}"
+    ])
+
+    order_details = "\n".join(order_details_parts)
 
     await callback.message.edit_text(
         order_details,
         reply_markup=get_back_to_orders_menu()
+        # parse_mode="HTML" тут не потрібен, якщо не використовуєте HTML теги
     )
+    await callback.answer()
 
 
