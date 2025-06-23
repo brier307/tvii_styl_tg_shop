@@ -202,7 +202,7 @@ class OrderManager:
         items_text = []
 
         for article, quantity in cart_items.items():
-            product_info = self.product_manager.get_product_info(article)
+            product_info = await self.product_manager.get_product_info(article)
             if product_info:
                 name, price, _ = product_info
                 subtotal = price * quantity
@@ -475,7 +475,7 @@ class OrderManager:
                 for article_code, quantity_in_cart in cart_items.items():
                     logger.debug(f"User {user_id}: Processing article {article_code} from cart.")
                     try:
-                        product_details = self.product_manager.get_product_details(article_code)
+                        product_details = await self.product_manager.get_product_details(article_code)
                     except Exception as e_pm:
                         logger.error(
                             f"User {user_id}: EXCEPTION in self.product_manager.get_product_details for article {article_code}: {e_pm}",

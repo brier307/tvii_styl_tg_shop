@@ -127,7 +127,7 @@ async def create_order(
             total_price = 0.0
             product_manager = ProductManager()  # Ініціалізуємо ProductManager
             for article, quantity in articles.items():
-                product_info = product_manager.get_product_info(article)
+                product_info = await product_manager.get_product_info(article)
                 if product_info:
                     _, price, _ = product_info
                     total_price += price * quantity

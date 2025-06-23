@@ -7,7 +7,7 @@ from app.database.products import ProductManager
 from app.user_order import process_show_orders, process_orders_pagination, show_order_details
 from app.user_keyboards import get_back_to_main_menu
 
-product_manager = ProductManager("Залишки номенклатури.xlsx")
+product_manager = ProductManager()
 
 user = Router()
 cart = RedisCart()
@@ -39,7 +39,7 @@ async def cmd_start(message: Message, command: CommandObject):
 
         if article:
             # Якщо є артикул, виводимо інформацію про товар
-            product_details = product_manager.get_product_details(article)
+            product_details = await product_manager.get_product_details(article)
             if product_details:
                 name = product_details["name"]
                 price = product_details["price"]
@@ -113,7 +113,7 @@ async def handle_article(message: Message):
     try:
         article = message.text.strip()
 
-        product_details = product_manager.get_product_details(article)
+        product_details = await product_manager.get_product_details(article)
 
         if product_details is None:
             await message.answer("❌ Товару з таким артикулом не знайдено.")
@@ -153,7 +153,7 @@ async def process_add_to_cart(callback: CallbackQuery):
         article = callback.data.replace("add_to_cart_", "")
 
         # Получаем информацию о товаре
-        product_info = product_manager.get_product_info(article)
+        product_info = await product_manager.get_product_info(article)
         if not product_info:
             await callback.answer("❌ Товар не знайдено", show_alert=True)
             return
@@ -317,7 +317,7 @@ async def process_increase_quantity(callback: CallbackQuery):
             return
 
         current_quantity = user_cart[article]
-        product_info = product_manager.get_product_info(article)
+        product_info = await product_manager.get_product_info(article)
 
         if not product_info:
             await callback.answer("❌ Товар недоступний")
@@ -493,7 +493,7 @@ async def show_delete_items_menu(callback: CallbackQuery):
         items_list = []
 
         for article, quantity in user_cart.items():
-            product_info = product_manager.get_product_info(article)
+            product_info = await product_manager.get_product_info(article)
             if product_info:
                 name, price, _ = product_info
                 text += (
@@ -546,7 +546,7 @@ async def delete_specific_item(callback: CallbackQuery):
                 items_list = []
 
                 for cart_article, quantity in user_cart.items():
-                    product_info = product_manager.get_product_info(cart_article)
+                    product_info = await product_manager.get_product_info(cart_article)
                     if product_info:
                         name, price, _ = product_info
                         text += (
@@ -623,7 +623,7 @@ async def show_quantity_change_menu(callback: CallbackQuery):
         items_info = []
 
         for article, quantity in user_cart.items():
-            product_info = product_manager.get_product_info(article)
+            product_info = await product_manager.get_product_info(article)
             if product_info:
                 name, price, available = product_info
                 text += (
@@ -669,7 +669,7 @@ async def update_quantity_menu(callback: CallbackQuery, user_cart: dict, success
     text = "📝 Зміна кількості товарів:\n\n"
 
     for article, quantity in user_cart.items():
-        product_info = product_manager.get_product_info(article)
+        product_info = await product_manager.get_product_info(article)
         if product_info:
             name, price, available = product_info
             text += (
@@ -713,7 +713,7 @@ async def quantity_increase(callback: CallbackQuery):
             return
 
         current_quantity = user_cart[article]
-        product_info = product_manager.get_product_info(article)
+        product_info = await product_manager.get_product_info(article)
 
         if not product_info:
             await callback.answer("Товар недоступний", show_alert=True)
@@ -751,7 +751,7 @@ async def quantity_increase(callback: CallbackQuery):
 
             updated_cart = await cart.get_cart(callback.from_user.id)
             for cart_article, quantity in updated_cart.items():
-                product_info = product_manager.get_product_info(cart_article)
+                product_info = await product_manager.get_product_info(cart_article)
                 if product_info:
                     name, price, available = product_info
                     text += (
@@ -819,7 +819,7 @@ async def quantity_decrease(callback: CallbackQuery):
 
             updated_cart = await cart.get_cart(callback.from_user.id)
             for cart_article, quantity in updated_cart.items():
-                product_info = product_manager.get_product_info(cart_article)
+                product_info = await product_manager.get_product_info(cart_article)
                 if product_info:
                     name, price, available = product_info
                     text += (

@@ -1,178 +1,170 @@
 import pandas as pd
 from typing import Optional, Tuple, Dict, List
 from pathlib import Path
+import zipfile
+import shutil
+import asyncio
 
 
 class ProductManager:
-    def __init__(self, file_path: str = "Залишки номенклатури.xlsx"):
+    def __init__(self, file_path: str = "C:/Остатки номенклатуры (файлы)/Залишки номенклатури.xlsx"):
         """
-        Ініціалізація менеджера продуктів
-
+        Ініціалізація менеджера продуктів.
         Args:
-            file_path (str): шлях до Excel файлу з товарами
+            file_path (str): шлях до Excel файлу з товарами.
+                             За замовчуванням встановлено шлях для 1С.
         """
         self.file_path = Path(file_path)
         self.df = None
-        self._load_data()
 
-    def _load_data(self) -> None:
-        """Завантаження даних з Excel файлу"""
+    def _repackage_and_load_sync(self):
+        """
+        Синхронний хелпер для перепакування та завантаження даних.
+        Ця функція виконується в окремому потоці, щоб не блокувати бота.
+        """
+        # --- Логіка перепакування ---
         try:
-            # Завантажуємо файл, починаючи з другої строки (header=1)
-            self.df = pd.read_excel(
-                self.file_path,
-                header=1,  # Заголовки знаходяться у другій строкі
-                usecols=[
-                    "Номенклатура",
-                    "Артикул",
-                    "Кількість\n(залишок)",
-                    "Ціна"
-                ]
-            )
+            if not self.file_path.is_file():
+                raise FileNotFoundError(f"Файл не знайдено: {self.file_path}")
 
-            # Очищаємо дані
-            self.df = self.df.dropna(subset=["Номенклатура"])
-            # Видаляємо пробіли в артикулах, якщо вони є
-            self.df["Артикул"] = self.df["Артикул"].astype(str).str.strip()
-            # Замінюємо 'nan' на пусту строку для артикулів
-            self.df.loc[self.df["Артикул"] == 'nan', "Артикул"] = ''
+            needs_repackaging = False
+            with zipfile.ZipFile(self.file_path, 'r') as z_in:
+                namelist = z_in.namelist()
+                if 'xl/SharedStrings.xml' in namelist and 'xl/sharedStrings.xml' not in namelist:
+                    needs_repackaging = True
 
-            # Преобразуємо числові колонки
-            self.df["Кількість\n(залишок)"] = pd.to_numeric(self.df["Кількість\n(залишок)"], errors='coerce').fillna(0)
-            self.df["Ціна"] = pd.to_numeric(self.df["Ціна"], errors='coerce').fillna(0)
-
+            if needs_repackaging:
+                temp_file_path = self.file_path.with_suffix(f'.repacked.xlsx')
+                with zipfile.ZipFile(self.file_path, 'r') as z_in, \
+                        zipfile.ZipFile(temp_file_path, 'w', zipfile.ZIP_DEFLATED) as z_out:
+                    for item in z_in.infolist():
+                        buffer = z_in.read(item.filename)
+                        if item.filename == 'xl/SharedStrings.xml':
+                            item.filename = 'xl/sharedStrings.xml'
+                        z_out.writestr(item, buffer)
+                # Безпечно замінюємо оригінальний файл
+                shutil.move(temp_file_path, self.file_path)
+        except (FileNotFoundError, zipfile.BadZipFile) as e:
+            # Якщо файл відсутній, пошкоджений або заблокований, pandas все одно видасть помилку,
+            # яку ми обробимо нижче.
+            print(f"Попередження при спробі перепакування: {e}")
         except Exception as e:
-            print(f"Помилка при завантаженні файлу: {e}")
-            raise
+            print(f"Неочікувана помилка під час перепакування файлу: {e}")
 
-    def get_product_details(self, article: str) -> Optional[dict]:
+        # --- Логіка завантаження та очищення даних ---
+        self.df = pd.read_excel(
+            self.file_path,
+            header=1,
+            usecols=[
+                "Номенклатура",
+                "Артикул",
+                "Кількість\n(залишок)",
+                "Ціна"
+            ]
+        )
+        self.df = self.df.dropna(subset=["Номенклатура"])
+        self.df["Артикул"] = self.df["Артикул"].astype(str).str.strip()
+        self.df.loc[self.df["Артикул"] == 'nan', "Артикул"] = ''
+        self.df["Кількість\n(залишок)"] = pd.to_numeric(self.df["Кількість\n(залишок)"], errors='coerce').fillna(0)
+        self.df["Ціна"] = pd.to_numeric(self.df["Ціна"], errors='coerce').fillna(0)
+
+    async def _load_data(self) -> bool:
+        """
+        Асинхронно завантажує дані з Excel файлу, виконуючи синхронний
+        блокуючий код в окремому потоці.
+        """
+        try:
+            # Виконуємо важку операцію вводу-виводу в потоці
+            await asyncio.to_thread(self._repackage_and_load_sync)
+            return True
+        except Exception as e:
+            print(f"ПОМИЛКА при завантаженні та обробці файлу: {e}")
+            self.df = None
+            return False
+
+    async def get_product_details(self, article: str) -> Optional[dict]:
         """
         Отримати детальну інформацію про товар, включаючи специфікації.
-
-        Args:
-            article (str): Артикул товару.
-
-        Returns:
-            Optional[dict]: Словник із деталями товару та специфікаціями,
-                            або None, якщо товар не знайдено.
         """
+        if not await self._load_data() or self.df is None:
+            return None
+
         try:
             if not article or article.strip() == '':
                 return None
 
-            # Знаходимо всі товари з вказаним артикулом
             products = self.df[self.df["Артикул"] == article.strip()]
-
             if products.empty:
                 return None
 
-            # Основна інформація про товар
-            name = products["Номенклатура"].iloc[0].split("(")[0].strip()  # Базова назва без специфікацій
+            name = products["Номенклатура"].iloc[0].split("(")[0].strip()
             price = float(products["Ціна"].iloc[0])
 
-            # Формуємо список специфікацій
             specifications = []
             for _, row in products.iterrows():
-                # Парсимо специфікацію від першої "(" і до кінця, навіть якщо немає ")"
                 spec_index = row["Номенклатура"].find("(")
-                if spec_index != -1:
-                    spec_name = row["Номенклатура"][spec_index:].strip()
-                else:
-                    spec_name = ""  # Якщо дужки немає взагалі
-
-                specification = {
-                    "specification": spec_name.rstrip(")"),  # Видаляємо зайву дужку, якщо вона є
+                spec_name = row["Номенклатура"][spec_index:].strip() if spec_index != -1 else ""
+                specifications.append({
+                    "specification": spec_name.rstrip(")"),
                     "quantity": int(row["Кількість\n(залишок)"]),
                     "price": float(row["Ціна"]),
-                }
-                specifications.append(specification)
-
+                })
             return {
                 "name": name,
                 "article": article,
                 "price": price,
                 "specifications": specifications,
             }
-
         except Exception as e:
             print(f"Помилка при отриманні деталей товару: {e}")
             return None
 
-    def get_product_info(self, article: str) -> Optional[Tuple[str, float, int]]:
+    async def get_product_info(self, article: str) -> Optional[Tuple[str, float, int]]:
         """
         Отримати інформацію про товар за артикулом.
-
-        Args:
-            article (str): Артикул товару.
-
-        Returns:
-            Optional[Tuple[str, float, int]]: Кортеж (назва, ціна, кількість) або None, якщо товар не знайдено.
         """
+        if not await self._load_data() or self.df is None:
+            return None
+
         try:
             if not article or article.strip() == '':
                 return None
 
-            # Пошук товару за артикулом
             product = self.df[self.df["Артикул"] == article.strip()]
-
             if product.empty:
                 return None
 
             name = product["Номенклатура"].iloc[0]
             price = float(product["Ціна"].iloc[0])
             quantity = int(product["Кількість\n(залишок)"].iloc[0])
-
             return (name, price, quantity)
-
         except Exception as e:
             print(f"Помилка при отриманні інформації про товар: {e}")
             return None
 
-    def is_available(self, article: str) -> bool:
+    async def is_available(self, article: str) -> bool:
         """
         Перевірити наявність товару на складі.
-
-        Args:
-            article (str): Артикул товару.
-
-        Returns:
-            bool: True, якщо товар є в наявності, False, якщо ні.
         """
-        product_info = self.get_product_info(article)
+        product_info = await self.get_product_info(article)
         if product_info is None:
             return False
         return product_info[2] > 0
 
-    def get_price(self, article: str) -> Optional[float]:
+    async def get_price(self, article: str) -> Optional[float]:
         """
         Отримати ціну товару за артикулом.
-
-        Args:
-            article (str): Артикул товару.
-
-        Returns:
-            Optional[float]: Ціна товару або None, якщо товар не знайдено.
         """
-        product_info = self.get_product_info(article)
+        product_info = await self.get_product_info(article)
         if product_info is None:
             return None
         return product_info[1]
 
-    def get_name(self, article: str) -> Optional[str]:
+    async def get_name(self, article: str) -> Optional[str]:
         """
         Отримати назву товару за артикулом.
-
-        Args:
-            article (str): Артикул товару.
-
-        Returns:
-            Optional[str]: Назва товару або None, якщо товар не знайдено.
         """
-        product_info = self.get_product_info(article)
+        product_info = await self.get_product_info(article)
         if product_info is None:
             return None
         return product_info[0]
-
-    def refresh_data(self) -> None:
-        """Оновити дані з Excel файлу."""
-        self._load_data()

@@ -1,3 +1,4 @@
+# app/cart.py
 import logging
 
 from aiogram import Router, F
@@ -13,13 +14,12 @@ from app.database.redis_cart import RedisCart
 from app.database.products import ProductManager
 
 
-product_manager = ProductManager("Залишки номенклатури.xlsx")
+product_manager = ProductManager()
 
 user = Router()
 cart = RedisCart()
 
 
-# Обновляем функцию format_cart_content для более информативного отображения
 async def format_cart_content(user_cart: dict, user_id: int) -> str:
     """
     Форматирует содержимое корзины в текстовое сообщение
@@ -36,7 +36,7 @@ async def format_cart_content(user_cart: dict, user_id: int) -> str:
     invalid_items = []
 
     for article, quantity in user_cart.items():
-        product_info = product_manager.get_product_info(article)
+        product_info = await product_manager.get_product_info(article)
         if not product_info:
             invalid_items.append(article)
             continue
@@ -58,12 +58,10 @@ async def format_cart_content(user_cart: dict, user_id: int) -> str:
             'available': available
         })
 
-    # Если есть недоступные товары, удаляем их
     if invalid_items:
         for article in invalid_items:
             await cart.remove_item(user_id, article)
 
-    # Если все товары оказались недоступны
     if not cart_items:
         return ("🛒 Ваш кошик порожній\n\n"
                 "Всі товари виявилися недоступними і були видалені.")

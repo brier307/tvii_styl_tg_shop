@@ -425,7 +425,7 @@ async def show_admin_order_details(callback: CallbackQuery):
 
     items_text_list = []
     for article_code, quantity in articles_dict.items():
-        product_info = product_manager_instance.get_product_info(article_code)
+        product_info = await product_manager_instance.get_product_info(article_code)
         product_name = product_info[0] if product_info else f"Артикул {article_code}"
         items_text_list.append(f"- {product_name} (Арт: {article_code}): {quantity} шт.")
 
@@ -572,7 +572,7 @@ async def process_tracking_number(message: Message, state: FSMContext):
         articles_dict = json.loads(updated_order.articles)
         items_text_list = []
         for article_code, quantity in articles_dict.items():
-            product_info = product_manager_instance.get_product_info(article_code)
+            product_info = await product_manager_instance.get_product_info(article_code)
             product_name = product_info[0] if product_info else f"Артикул {article_code}"
             items_text_list.append(f"- {product_name} (Арт: {article_code}): {quantity} шт.")
         items_text = "\n".join(items_text_list)
