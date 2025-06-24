@@ -4,10 +4,11 @@ from pathlib import Path
 import zipfile
 import shutil
 import asyncio
+from config import PATH_TO_STOCK
 
 
 class ProductManager:
-    def __init__(self, file_path: str = "C:/Остатки номенклатуры (файлы)/Залишки номенклатури.xlsx"):
+    def __init__(self, file_path: str = PATH_TO_STOCK):
         """
         Ініціалізація менеджера продуктів.
         Args:
