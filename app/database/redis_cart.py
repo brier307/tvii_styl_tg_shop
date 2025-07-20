@@ -50,130 +50,71 @@ class RedisCart:
         """Генерирует ключ для корзины пользователя"""
         return f"{self.cart_prefix}{tg_id}"
 
-    async def add_to_cart(self, tg_id: int, article: str, quantity: int = 1) -> tuple[bool, str]:
+    async def add_item_to_cart(self, tg_id: int, item_id: str, quantity: int = 1) -> tuple[bool, str]:
         """
-        Добавляет товар в корзину
-
-        Args:
-            tg_id (int): ID пользователя
-            article (str): Артикул товара
-            quantity (int): Количество товара
-
-        Returns:
-            tuple[bool, str]: (успех операции, сообщение)
+        Добавляет товар (по штрих-коду) в корзину.
         """
         try:
             await self.ensure_connection()
             cart_key = self._get_cart_key(tg_id)
-
-            # Получаем текущую корзину
             current_cart = await self.get_cart(tg_id) or {}
 
-            # Обновляем количество
-            current_quantity = current_cart.get(article, 0)
+            current_quantity = current_cart.get(item_id, 0)
             new_quantity = current_quantity + quantity
 
-            # Проверяем ограничение на количество
-            if new_quantity > 10:
-                return False, "⚠️ Не можна додати більше 10 одиниць одного товару"
+            if new_quantity > 999:
+                return False, "⚠️ Не можна додати більше 999 одиниць одного товару"
 
-            # Обновляем корзину
-            current_cart[article] = new_quantity
-
-            # Сохраняем корзину
+            current_cart[item_id] = new_quantity
             await self.redis.set(
                 cart_key,
                 json.dumps(current_cart),
                 ex=int(self.expiration.total_seconds())
             )
-
             return True, "✅ Товар додано до кошика"
-
-        except redis.ConnectionError as e:
-            logger.error(f"Redis connection error: {e}")
-            return False, "⚠️ Помилка підключення до бази даних"
         except Exception as e:
             logger.error(f"Error adding to cart: {e}")
-            return False, "⚠️ Помилка при додаванні товару"
+            return False, "⚠️ Помилка при додаванні товару до кошика"
 
     async def get_cart(self, tg_id: int) -> Optional[Dict[str, int]]:
         """
-        Получает содержимое корзины
-
-        Args:
-            tg_id (int): ID пользователя
-
-        Returns:
-            Optional[Dict[str, int]]: Словарь {артикул: количество} или None
+        Получает содержимое корзины {item_id: количество}.
         """
         try:
             await self.ensure_connection()
             cart_key = self._get_cart_key(tg_id)
             cart_data = await self.redis.get(cart_key)
-
-            if cart_data:
-                try:
-                    return json.loads(cart_data)
-                except json.JSONDecodeError:
-                    logger.error(f"Invalid JSON in cart data for user {tg_id}")
-                    return {}
-            return {}
-
-        except redis.ConnectionError as e:
-            logger.error(f"Redis connection error: {e}")
-            return {}
+            return json.loads(cart_data) if cart_data else {}
         except Exception as e:
             logger.error(f"Error getting cart: {e}")
             return {}
 
-    async def update_quantity(self, tg_id: int, article: str, quantity: int) -> tuple[bool, str]:
+    async def update_item_quantity(self, tg_id: int, item_id: str, quantity: int) -> tuple[bool, str]:
         """
-        Обновляет количество товара в корзине
-
-        Args:
-            tg_id (int): ID пользователя
-            article (str): Артикул товара
-            quantity (int): Новое количество
-
-        Returns:
-            tuple[bool, str]: (успех операции, сообщение)
+        Обновляет количество товара (по штрих-коду) в корзине.
         """
         try:
             await self.ensure_connection()
-
             if quantity <= 0:
-                return await self.remove_item(tg_id, article)
-
-            if quantity > 10:
-                return False, "⚠️ Не можна додати більше 10 одиниць одного товару"
+                return await self.remove_item(tg_id, item_id)
+            if quantity > 999:
+                return False, "⚠️ Не можна додати більше 999 одиниць одного товару"
 
             cart_key = self._get_cart_key(tg_id)
             current_cart = await self.get_cart(tg_id)
+            if not current_cart or item_id not in current_cart:
+                return False, "❌ Товар не найден в корзине"
 
-            if not current_cart:
-                return False, "❌ Кошик порожній"
-
-            if article not in current_cart:
-                return False, "❌ Товар не знайдено в кошику"
-
-            # Обновляем количество
-            current_cart[article] = quantity
-
-            # Сохраняем корзину
+            current_cart[item_id] = quantity
             await self.redis.set(
                 cart_key,
                 json.dumps(current_cart),
                 ex=int(self.expiration.total_seconds())
             )
-
             return True, "✅ Кількість оновлено"
-
-        except redis.ConnectionError as e:
-            logger.error(f"Redis connection error: {e}")
-            return False, "⚠️ Помилка підключення до бази даних"
         except Exception as e:
             logger.error(f"Error updating quantity: {e}")
-            return False, "⚠️ Помилка при оновленні кількості"
+            return False, "⚠️ Помилка при оновленні кількості товару в кошику"
 
     async def remove_item(self, tg_id: int, article: str) -> tuple[bool, str]:
         """
@@ -221,25 +162,15 @@ class RedisCart:
 
     async def clear_cart(self, tg_id: int) -> tuple[bool, str]:
         """
-        Очищает корзину
-
-        Args:
-            tg_id (int): ID пользователя
-
-        Returns:
-            tuple[bool, str]: (успех операции, сообщение)
+        Очищает корзину пользователя.
         """
         try:
             await self.ensure_connection()
             cart_key = self._get_cart_key(tg_id)
-
             if await self.redis.delete(cart_key):
                 return True, "✅ Кошик очищено"
-            return False, "❌ Кошик вже порожній"
-
-        except redis.ConnectionError as e:
-            logger.error(f"Redis connection error: {e}")
-            return False, "⚠️ Помилка підключення до бази даних"
+            return False, "❌ Корзина уже пуста"
         except Exception as e:
             logger.error(f"Error clearing cart: {e}")
             return False, "⚠️ Помилка при очищенні кошика"
+

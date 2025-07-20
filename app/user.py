@@ -19,65 +19,50 @@ logger = logging.getLogger(__name__)
 @user.message(CommandStart())
 async def cmd_start(message: Message, command: CommandObject):
     """
-    Обробляє команду /start та диплінки.
-    Формат диплінку: https://t.me/bot?start=00-00351422
-    де 00-00351422 - артикул товару.
+    Обрабатывает команду /start и диплинки.
+    Формат диплинка: https://t.me/bot?start=2000000048291
+    где 2000000048291 - штрих-код товара.
     """
     try:
-        # Отримуємо або створюємо користувача
         user_id = message.from_user.id
-        user_name = message.from_user.full_name  # Отримуємо повне ім'я користувача
-
-        logger.info(f"Обробка команди /start для користувача {user_id} ({user_name})")
-
-        # Реєструємо/оновлюємо інформацію про користувача
+        user_name = message.from_user.full_name
         await set_user(user_id, user_name)
-        logger.debug(f"Користувач {user_id} зареєстрований у базі даних")
+        barcode = command.args
 
-        # Отримуємо параметр із команди /start
-        article = command.args
-
-        if article:
-            # Якщо є артикул, виводимо інформацію про товар
-            product_details = await product_manager.get_product_details(article)
-            if product_details:
-                name = product_details["name"]
-                price = product_details["price"]
-                specifications = product_details["specifications"]
-
-                # Формуємо повідомлення з інформацією про товар
-                text = f"📦 {name}\nАртикул: {article}\n💰 Ціна: {price:.2f} грн.\n\n"
-
-                if len(specifications) > 1:
-                    text += "🗂 Розміри/кольори:\n"
-                    for spec in specifications:
-                        text += f"🔘 {spec['specification']}\n📊 В наявності: {spec['quantity']} шт.\n\n"
-                else:
-                    spec = specifications[0]
-                    text += f"📊 В наявності: {spec['quantity']} шт.\n\n"
-
-                text += "Щоб додати товар до кошика, натисніть кнопку нижче 👇"
-
-                # Відповідаємо користувачу
-                await message.answer(
-                    text,
-                    reply_markup=get_product_keyboard(article, in_cart=False)
-                )
+        if barcode:
+            product_info = await product_manager.get_product_info_by_barcode(barcode)
+            if product_info:
+                name, price, available, article = product_info
+                text = f"📦 {name}\nАртикул: {article}\n💰 ціна: {price:.2f} грн.\n📊 В наявносі: {available} шт.\n\n"
+                text += "Щоб додати товар в кошик, натисніть кнопку нижче 👇"
+                await message.answer(text, reply_markup=get_product_keyboard(barcode, in_cart=False))
                 return
 
-        # Якщо артикула немає або його не знайдено, показуємо головне меню
         await message.answer(
-            f"👋 Вітаємо у нашому магазині!\n\n"
-            f"🆔 Ваш ID: {message.from_user.id}\n\n"
-            f"Оберіть потрібний розділ:",
+            f"👋 Ласкаво просимо!\nОберіть необхідний розділ",
             reply_markup=get_main_keyboard()
         )
-
     except Exception as e:
-        logger.error(f"Помилка обробки команди /start: {str(e)}", exc_info=True)
-        await message.answer(
-            "Виникла помилка при обробці запиту. Будь ласка, спробуйте ще раз або зверніться до підтримки."
-        )
+        logger.error(f"Помилка в cmd_start: {e}", exc_info=True)
+        await message.answer("Виникла помилка.")
+
+
+@user.message(F.text)
+async def handle_barcode(message: Message):
+    try:
+        barcode = message.text.strip()
+        product_info = await product_manager.get_product_info_by_barcode(barcode)
+
+        if product_info is None:
+            await message.answer("❌ Товару з таким штрихкодом не знайдено.")
+            return
+
+        name, price, available, article = product_info
+        response = f"📦 {name}\nАртикул: {article}\nШтрих-код: {barcode}\n💰 Цена: {price:.2f} грн.\n📊 В наличии: {available} шт."
+        await message.answer(response, reply_markup=get_product_keyboard(barcode, in_cart=False))
+    except Exception as e:
+        await message.answer("❌ Помилка при обробці запиту.")
+        print(f"Помилка в handle_barcode: {e}")
 
 
 # Обработчики callback-запросов для главного меню
@@ -93,7 +78,7 @@ async def process_show_catalog(callback: CallbackQuery):
 async def process_show_support(callback: CallbackQuery):
     await callback.message.edit_text(
         "💬 Підтримка\n\n"
-        "Оберіть опцію нижче або напишіть повідомлення користувачу @u:",
+        "Оберіть опцію нижче або напишіть повідомлення користувачу (буде додано посилання на користувача):",
         reply_markup=get_support_keyboard()
     )
 
@@ -144,92 +129,44 @@ async def handle_article(message: Message):
 
 @user.callback_query(F.data.startswith("add_to_cart_"))
 async def process_add_to_cart(callback: CallbackQuery):
-    """
-    Обработчик добавления товара в корзину
-    callback.data format: add_to_cart_00-00351422 (артикул товара)
-    """
     try:
-        # Получаем артикул товара из callback data
-        article = callback.data.replace("add_to_cart_", "")
-
-        # Получаем информацию о товаре
-        product_info = await product_manager.get_product_info(article)
+        barcode = callback.data.replace("add_to_cart_", "")
+        product_info = await product_manager.get_product_info_by_barcode(barcode)
         if not product_info:
             await callback.answer("❌ Товар не знайдено", show_alert=True)
             return
 
-        name, price, available = product_info
-
-        # Проверяем наличие товара на складе
+        name, price, available, article = product_info
         if available <= 0:
             await callback.answer("❌ Товар тимчасово відсутній", show_alert=True)
             return
 
-        # Проверяем текущую корзину пользователя
         current_cart = await cart.get_cart(callback.from_user.id)
-        current_quantity = current_cart.get(article, 0) if current_cart else 0
+        current_quantity = current_cart.get(barcode, 0) if current_cart else 0
 
-        # Проверяем, не превышает ли количество доступное на складе
         if current_quantity >= available:
-            await callback.answer(
-                f"❌ У кошику вже максимальна кількість цього товару ({available} шт.)",
-                show_alert=True
-            )
+            await callback.answer(f"❌ К кошику максимальна кількість товару ({available} шт.)", show_alert=True)
+            return
+        if current_quantity >= 999:
+            await callback.answer("❌ Не можна додати більше 999 одиниць товару", show_alert=True)
             return
 
-        # Проверяем лимит на количество одного товара
-        if current_quantity >= 10:
-            await callback.answer(
-                "❌ Не можна додати більше 10 одиниць одного товару",
-                show_alert=True
-            )
-            return
-
-        # Добавляем товар в корзину
-        success, msg = await cart.add_to_cart(callback.from_user.id, article)
-
+        success, msg = await cart.add_item_to_cart(callback.from_user.id, barcode)
         if success:
-            # Обновляем сообщение с информацией о товаре
-            text = (
-                f"📦 {name}\n"
-                f"Артикул: {article}\n"
-                f"💰 Ціна: {price:.2f} грн.\n"
-                f"📊 В наявності: {available} шт.\n\n"
-                f"✅ Товар додано до кошика!"
-            )
-
-            # Получаем обновленную корзину для проверки
+            text = f"📦 {name}\nАртикул: {article}\n💰 Ціна: {price:.2f} грн.\n📊 В наявності: {available} шт.\n\n✅ Товар додано в кошик!"
             updated_cart = await cart.get_cart(callback.from_user.id)
-            item_quantity = updated_cart.get(article, 0) if updated_cart else 0
-
-            # Добавляем информацию о количестве в корзине
+            item_quantity = updated_cart.get(barcode, 0)
             if item_quantity > 0:
-                text += f"\n🛒 У кошику: {item_quantity} шт."
-
-            # Обновляем клавиатуру и сообщение
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_product_keyboard(article, True)
-            )
-
-            # Показываем уведомление
-            await callback.answer("✅ Товар додано до кошика!")
+                text += f"\n🛒 В кошику: {item_quantity} шт."
+            await callback.message.edit_text(text, reply_markup=get_product_keyboard(barcode, True))
+            await callback.answer("✅ Товар додано в кошик!")
         else:
-            # Если произошла ошибка при добавлении
-            await callback.answer(
-                "❌ Помилка при додаванні товару. Спробуйте пізніше.",
-                show_alert=True
-            )
-
+            await callback.answer("❌ Помилка при додаванні товару.", show_alert=True)
     except Exception as e:
         print(f"Error adding product to cart: {e}")
-        await callback.answer(
-            "❌ Сталася помилка. Спробуйте пізніше.",
-            show_alert=True
-        )
+        await callback.answer("❌ Виникла помилка.", show_alert=True)
 
 
-# Обработчик для просмотра корзины
 # Обработчик для просмотра корзины через главное меню
 @user.callback_query(F.data == "show_cart")
 async def process_show_cart(callback: CallbackQuery):
@@ -435,90 +372,47 @@ async def process_clear_cart(callback: CallbackQuery):
 
 @user.callback_query(F.data.startswith("remove_from_cart_"))
 async def process_remove_from_cart(callback: CallbackQuery):
-    """Обработчик удаления товара из корзины"""
     try:
-        # Получаем артикул товара из callback data
-        article = callback.data.replace("remove_from_cart_", "")
-
-        # Пробуем удалить товар из корзины
-        success, msg = await cart.remove_item(callback.from_user.id, article)
-
+        barcode = callback.data.replace("remove_from_cart_", "")
+        success, msg = await cart.remove_item(callback.from_user.id, barcode)
         if success:
-            # Получаем обновленную корзину
-            user_cart = await cart.get_cart(callback.from_user.id)
-
-            if not user_cart:
-                # Если корзина пуста после удаления
-                await callback.message.edit_text(
-                    "🛒 Ваш кошик порожній\n\n"
-                    "Щоб додати товари, перейдіть до каталогу 📋",
-                    reply_markup=get_cart_keyboard(has_items=False)
-                )
-            else:
-                # Если в корзине остались товары, обновляем её отображение
-                cart_text = await format_cart_content(user_cart, callback.from_user.id)
-                await callback.message.edit_text(
-                    cart_text,
-                    reply_markup=get_cart_keyboard(has_items=True)
-                )
-
-            # Показываем уведомление об успешном удалении
-            await callback.answer("✅ Товар видалено з кошика")
+            # Обновляем сообщение, чтобы показать, что товар удален
+            product_info = await product_manager.get_product_info_by_barcode(barcode)
+            if product_info:
+                name, price, available, article = product_info
+                text = f"📦 {name}\nАртикул: {article}\n💰 Цена: {price:.2f} грн.\n📊 В наличии: {available} шт.\n\n✅ Товар удален из корзины!"
+                await callback.message.edit_text(text, reply_markup=get_product_keyboard(barcode, False))
+            await callback.answer("✅ Товар удален из корзины")
         else:
-            # Если произошла ошибка при удалении
-            await callback.answer(
-                "❌ Помилка при видаленні товару",
-                show_alert=True
-            )
-
+            await callback.answer("❌ Ошибка при удалении товара", show_alert=True)
     except Exception as e:
         logger.error(f"Error removing item from cart: {e}")
-        await callback.answer(
-            "❌ Помилка при видаленні товару. Спробуйте пізніше.",
-            show_alert=True
-        )
+        await callback.answer("❌ Ошибка при удалении товара.", show_alert=True)
 
 
 @user.callback_query(F.data == "delete_items")
 async def show_delete_items_menu(callback: CallbackQuery):
-    """Показывает меню для удаления отдельных товаров"""
+    """Показує меню для видалення окремих товарів."""
     try:
         user_cart = await cart.get_cart(callback.from_user.id)
-
         if not user_cart:
             await callback.answer("Кошик порожній", show_alert=True)
             return
 
-        text = "🗑 Виберіть товар для видалення:\n\n"
         items_list = []
-
-        for article, quantity in user_cart.items():
-            product_info = await product_manager.get_product_info(article)
+        for barcode, _ in user_cart.items():
+            product_info = await product_manager.get_product_info_by_barcode(barcode)
             if product_info:
-                name, price, _ = product_info
-                text += (
-                    f"📦 {name}\n"
-                    f"Артикул: {article}\n"
-                    f"Кількість: {quantity} шт.\n"
-                    f"Ціна: {price:.2f} грн. x {quantity} = {price * quantity:.2f} грн.\n"
-                    "➖➖➖➖➖➖➖➖➖➖\n\n"
-                )
-                items_list.append((article, name))
+                name, _, _, _ = product_info
+                items_list.append((barcode, name))
 
-        text += "Натисніть на товар, який хочете видалити:"
-
-        # Создаем клавиатуру с товарами для удаления
         await callback.message.edit_text(
-            text,
+            "🗑 Виберіть товар для видалення:",
             reply_markup=get_delete_items_keyboard(items_list)
         )
-
     except Exception as e:
         logger.error(f"Error showing delete items menu: {e}")
-        await callback.answer(
-            "Помилка при завантаженні меню видалення",
-            show_alert=True
-        )
+        await callback.answer("Помилка при завантаженні меню видалення", show_alert=True)
 
 
 # Обработчик для удаления конкретного товара
@@ -583,119 +477,47 @@ async def delete_specific_item(callback: CallbackQuery):
 # Обработчик возврата к просмотру корзины
 @user.callback_query(F.data == "back_to_cart")
 async def back_to_cart(callback: CallbackQuery):
-    """Возвращает к просмотру корзины"""
-    try:
-        user_cart = await cart.get_cart(callback.from_user.id)
-
-        if not user_cart:
-            await callback.message.edit_text(
-                "🛒 Ваш кошик порожній\n\n"
-                "Щоб додати товари, перейдіть до каталогу 📋",
-                reply_markup=get_cart_keyboard(has_items=False)
-            )
-            return
-
-        cart_text = await format_cart_content(user_cart, callback.from_user.id)
-        await callback.message.edit_text(
-            cart_text,
-            reply_markup=get_cart_keyboard(has_items=True)
-        )
-
-    except Exception as e:
-        logger.error(f"Error returning to cart: {e}")
-        await callback.answer(
-            "❌ Помилка при поверненні до кошика",
-            show_alert=True
-        )
+    """Повертає до перегляду кошика."""
+    await process_show_cart(callback)
 
 
 @user.callback_query(F.data == "change_quantities")
 async def show_quantity_change_menu(callback: CallbackQuery):
-    """Показывает меню изменения количества товаров"""
+    """Показує меню зміни кількості товарів."""
+    user_cart = await cart.get_cart(callback.from_user.id)
+    if not user_cart:
+        await callback.answer("Кошик порожній", show_alert=True)
+        return
+    await update_quantity_menu(callback)
+
+
+async def update_quantity_menu(callback: CallbackQuery, success_message: str = None):
+    """Допоміжна функція для оновлення меню зміни кількості."""
     try:
         user_cart = await cart.get_cart(callback.from_user.id)
-
         if not user_cart:
-            await callback.answer("Кошик порожній", show_alert=True)
+            # Якщо кошик спорожнів, повертаємо до головного меню кошика
+            await process_show_cart(callback)
             return
 
-        text = "📝 Зміна кількості товарів:\n\n"
         items_info = []
-
-        for article, quantity in user_cart.items():
-            product_info = await product_manager.get_product_info(article)
+        for barcode, quantity in user_cart.items():
+            product_info = await product_manager.get_product_info_by_barcode(barcode)
             if product_info:
-                name, price, available = product_info
-                text += (
-                    f"📦 {name}\n"
-                    f"Артикул: {article}\n"
-                    f"Поточна кількість: {quantity} шт.\n"
-                    f"Доступно на складі: {available} шт.\n"
-                    f"Ціна: {price:.2f} грн. x {quantity} = {price * quantity:.2f} грн.\n"
-                    "➖➖➖➖➖➖➖➖➖➖\n\n"
-                )
+                name, _, available, _ = product_info
                 items_info.append({
-                    'article': article,
+                    'barcode': barcode,
                     'name': name,
                     'quantity': quantity,
                     'available': available
                 })
 
-        text += "Використовуйте кнопки ➕ та ➖ для зміни кількості:"
-
         await callback.message.edit_text(
-            text,
+            "📝 Зміна кількості товарів:",
             reply_markup=get_quantity_change_keyboard(items_info)
         )
-
-    except Exception as e:
-        logger.error(f"Error showing quantity change menu: {e}")
-        await callback.answer(
-            "Помилка при завантаженні меню зміни кількості",
-            show_alert=True
-        )
-
-
-async def update_quantity_menu(callback: CallbackQuery, user_cart: dict, success_message: str):
-    """
-    Вспомогательная функция для обновления меню изменения количества
-
-    Args:
-        callback (CallbackQuery): Callback запрос
-        user_cart (dict): Корзина пользователя
-        success_message (str): Сообщение об успешном обновлении
-    """
-    items_info = []
-    text = "📝 Зміна кількості товарів:\n\n"
-
-    for article, quantity in user_cart.items():
-        product_info = await product_manager.get_product_info(article)
-        if product_info:
-            name, price, available = product_info
-            text += (
-                f"📦 {name}\n"
-                f"Артикул: {article}\n"
-                f"Поточна кількість: {quantity} шт.\n"
-                f"Доступно на складі: {available} шт.\n"
-                f"Ціна: {price:.2f} грн. x {quantity} = {price * quantity:.2f} грн.\n"
-                "➖➖➖➖➖➖➖➖➖➖\n\n"
-            )
-            items_info.append({
-                'article': article,
-                'name': name,
-                'quantity': quantity,
-                'available': available
-            })
-
-    text += "Використовуйте кнопки ➕ та ➖ для зміни кількості:"
-
-    try:
-        # Обновляем сообщение с сохранением текущего меню
-        await callback.message.edit_text(
-            text,
-            reply_markup=get_quantity_change_keyboard(items_info)
-        )
-        await callback.answer(success_message)
+        if success_message:
+            await callback.answer(success_message)
     except Exception as e:
         logger.error(f"Error updating quantity menu: {e}")
         await callback.answer("❌ Помилка при оновленні меню")
@@ -703,153 +525,41 @@ async def update_quantity_menu(callback: CallbackQuery, user_cart: dict, success
 
 @user.callback_query(F.data.startswith("qty_increase_"))
 async def quantity_increase(callback: CallbackQuery):
-    """Увеличивает количество товара в меню изменения количества"""
-    try:
-        article = callback.data.replace("qty_increase_", "")
-        user_cart = await cart.get_cart(callback.from_user.id)
+    """Збільшує кількість товару."""
+    barcode = callback.data.replace("qty_increase_", "")
+    user_cart = await cart.get_cart(callback.from_user.id)
+    current_quantity = user_cart.get(barcode, 0)
 
-        if not user_cart or article not in user_cart:
-            await callback.answer("Товар не знайдено в кошику", show_alert=True)
-            return
+    product_info = await product_manager.get_product_info_by_barcode(barcode)
+    if not product_info:
+        await callback.answer("Товар більше недоступний", show_alert=True)
+        return
 
-        current_quantity = user_cart[article]
-        product_info = await product_manager.get_product_info(article)
+    _, _, available, _ = product_info
 
-        if not product_info:
-            await callback.answer("Товар недоступний", show_alert=True)
-            return
+    if current_quantity >= available:
+        await callback.answer(f"Більше додати неможливо. Доступно: {available} шт.", show_alert=True)
+        return
 
-        name, price, available = product_info
-
-        # Проверяем ограничения
-        if current_quantity >= available:
-            await callback.answer(
-                f"Неможливо додати більше. Доступно: {available} шт.",
-                show_alert=True
-            )
-            return
-
-        if current_quantity >= 10:
-            await callback.answer(
-                "Не можна додати більше 10 одиниць товару",
-                show_alert=True
-            )
-            return
-
-        # Увеличиваем количество
-        new_quantity = current_quantity + 1
-        success, msg = await cart.update_quantity(
-            callback.from_user.id,
-            article,
-            new_quantity
-        )
-
-        if success:
-            # Обновляем меню изменения количества
-            items_info = []
-            text = "📝 Зміна кількості товарів:\n\n"
-
-            updated_cart = await cart.get_cart(callback.from_user.id)
-            for cart_article, quantity in updated_cart.items():
-                product_info = await product_manager.get_product_info(cart_article)
-                if product_info:
-                    name, price, available = product_info
-                    text += (
-                        f"📦 {name}\n"
-                        f"Артикул: {cart_article}\n"
-                        f"Поточна кількість: {quantity} шт.\n"
-                        f"Доступно на складі: {available} шт.\n"
-                        f"Ціна: {price:.2f} грн. x {quantity} = {price * quantity:.2f} грн.\n"
-                        "➖➖➖➖➖➖➖➖➖➖\n\n"
-                    )
-                    items_info.append({
-                        'article': cart_article,
-                        'name': name,
-                        'quantity': quantity,
-                        'available': available
-                    })
-
-            text += "Використовуйте кнопки ➕ та ➖ для зміни кількості:"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_quantity_change_keyboard(items_info)
-            )
-            await callback.answer("✅ Кількість збільшено")
-        else:
-            await callback.answer("❌ Помилка при оновленні кількості")
-
-    except Exception as e:
-        logger.error(f"Error in quantity increase: {e}")
-        await callback.answer("❌ Помилка при збільшенні кількості")
+    success, _ = await cart.update_item_quantity(callback.from_user.id, barcode, current_quantity + 1)
+    if success:
+        await update_quantity_menu(callback, "✅ Кількість збільшено")
 
 
 @user.callback_query(F.data.startswith("qty_decrease_"))
 async def quantity_decrease(callback: CallbackQuery):
-    """Уменьшает количество товара в меню изменения количества"""
-    try:
-        article = callback.data.replace("qty_decrease_", "")
-        user_cart = await cart.get_cart(callback.from_user.id)
+    """Зменшує кількість товару."""
+    barcode = callback.data.replace("qty_decrease_", "")
+    user_cart = await cart.get_cart(callback.from_user.id)
+    current_quantity = user_cart.get(barcode, 0)
 
-        if not user_cart or article not in user_cart:
-            await callback.answer("Товар не знайдено в кошику", show_alert=True)
-            return
+    if current_quantity <= 1:
+        await callback.answer("Для видалення товару використовуйте меню видалення.", show_alert=True)
+        return
 
-        current_quantity = user_cart[article]
-
-        if current_quantity <= 1:
-            await callback.answer(
-                "Щоб видалити товар, використовуйте кнопку видалення",
-                show_alert=True
-            )
-            return
-
-        # Уменьшаем количество
-        new_quantity = current_quantity - 1
-        success, msg = await cart.update_quantity(
-            callback.from_user.id,
-            article,
-            new_quantity
-        )
-
-        if success:
-            # Обновляем меню изменения количества
-            items_info = []
-            text = "📝 Зміна кількості товарів:\n\n"
-
-            updated_cart = await cart.get_cart(callback.from_user.id)
-            for cart_article, quantity in updated_cart.items():
-                product_info = await product_manager.get_product_info(cart_article)
-                if product_info:
-                    name, price, available = product_info
-                    text += (
-                        f"📦 {name}\n"
-                        f"Артикул: {cart_article}\n"
-                        f"Поточна кількість: {quantity} шт.\n"
-                        f"Доступно на складі: {available} шт.\n"
-                        f"Ціна: {price:.2f} грн. x {quantity} = {price * quantity:.2f} грн.\n"
-                        "➖➖➖➖➖➖➖➖➖➖\n\n"
-                    )
-                    items_info.append({
-                        'article': cart_article,
-                        'name': name,
-                        'quantity': quantity,
-                        'available': available
-                    })
-
-            text += "Використовуйте кнопки ➕ та ➖ для зміни кількості:"
-
-            await callback.message.edit_text(
-                text,
-                reply_markup=get_quantity_change_keyboard(items_info)
-            )
-            await callback.answer("✅ Кількість зменшено")
-        else:
-            await callback.answer("❌ Помилка при оновленні кількості")
-
-    except Exception as e:
-        logger.error(f"Error in quantity decrease: {e}")
-        await callback.answer("❌ Помилка при зменшенні кількості")
+    success, _ = await cart.update_item_quantity(callback.from_user.id, barcode, current_quantity - 1)
+    if success:
+        await update_quantity_menu(callback, "✅ Кількість зменшено")
 
 
 @user.callback_query(F.data == "quantity_info")

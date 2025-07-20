@@ -86,60 +86,42 @@ async def update_user_phone(tg_id: int, phone: str) -> Optional[User]:
 
 async def create_order(
         tg_id: int,
-        articles: Dict[str, int],
+        items: Dict[str, int], # {barcode: quantity}
         name: str,
         phone: str,
         delivery: DeliveryMethod,
         address: str,
         payment_method: str,
-        comment: Optional[str] = None  # <-- Добавлен параметр comment
+        comment: Optional[str] = None
 ) -> Optional[Order]:
     """
-    Створює нове замовлення у базі даних.
-
+    Создает новый заказ в базе данных.
     Args:
-        tg_id (int): Telegram ID користувача
-        articles (Dict[str, int]): Словник товарів {артикул: кількість}
-        name (str): ПІБ отримувача
-        phone (str): Номер телефону
-        delivery (DeliveryMethod): Спосіб доставки (enum)
-        address (str): Адреса доставки
-        payment_method (str): Спосіб оплати
-        comment (Optional[str]): Коментар до замовлення  # <-- Добавлено описание
-    Returns:
-        Optional[Order]: Створене замовлення або None у разі помилки
+        items (Dict[str, int]): Словарь товаров {штрих-код: количество}
     """
     logger.info(f"Creating new order for user {tg_id}")
-
     try:
         async with async_session() as session:
-            # Перевіряємо існування користувача
-            query = select(User).where(User.tg_id == tg_id)
-            user = await session.scalar(query)
-
+            user = await session.scalar(select(User).where(User.tg_id == tg_id))
             if not user:
-                logger.error(f"User {tg_id} not found in database")
+                logger.error(f"User {tg_id} not found")
                 return None
 
-            logger.debug(f"Found user: {user.id}")
-
-            # Обчислюємо загальну суму замовлення
             total_price = 0.0
-            product_manager = ProductManager()  # Ініціалізуємо ProductManager
-            for article, quantity in articles.items():
-                product_info = await product_manager.get_product_info(article)
+            product_manager = ProductManager()
+            # Расчет суммы по штрих-кодам
+            for barcode, quantity in items.items():
+                product_info = await product_manager.get_product_info_by_barcode(barcode)
                 if product_info:
-                    _, price, _ = product_info
+                    _, price, _, _ = product_info
                     total_price += price * quantity
 
-            # Встановлюємо дату у часовому поясі UTC+3
             utc_plus_3 = timezone('Etc/GMT-3')
             current_time = datetime.now(utc_plus_3)
 
-            # Створюємо нове замовлення
             new_order = Order(
                 tg_id=tg_id,
-                articles=json.dumps(articles),
+                articles=json.dumps(items), # Сохраняем {barcode: quantity}
                 name=name,
                 phone=phone,
                 delivery=delivery.value,
@@ -148,38 +130,15 @@ async def create_order(
                 date=current_time,
                 status=OrderStatus.NEW.value,
                 total_price=total_price,
-                comment=comment  # <-- Сохраняем комментарий
+                comment=comment
             )
-
-            # Додаємо замовлення до сесії
             session.add(new_order)
-
-            # Коммітимо зміни
             await session.commit()
-
-            # Оновлюємо об'єкт замовлення після комміта
             await session.refresh(new_order)
-
-            created_order_id = new_order.id
-            logger.info(f"Successfully created order #{created_order_id} for user {tg_id}")
-
-            # Отримуємо свіжу копію замовлення
-            query = select(Order).where(Order.id == created_order_id)
-            final_order = await session.scalar(query)
-
-            return final_order
-
-    except SQLAlchemyError as e:
-        logger.error(
-            f"Database error while creating order for user {tg_id}: {str(e)}",
-            exc_info=True
-        )
-        return None
+            logger.info(f"Successfully created order #{new_order.id}")
+            return new_order
     except Exception as e:
-        logger.error(
-            f"Unexpected error while creating order for user {tg_id}: {str(e)}",
-            exc_info=True
-        )
+        logger.error(f"Error creating order for user {tg_id}: {e}", exc_info=True)
         return None
 
 

@@ -9,3 +9,4 @@ class RegExample(StatesGroup):
 
 class AdminOrderStates(StatesGroup):
     EnterTrackingNumber = State()
+    GenerateDeeplink = State()

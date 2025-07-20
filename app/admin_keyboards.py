@@ -6,13 +6,19 @@ from app.database.models import OrderStatus
 
 def get_admin_main_menu() -> InlineKeyboardMarkup:
     """
-    Створює головне меню адміністратора з кнопкою для переходу до замовлень.
+    Створює головне меню адміністратора.
     """
     builder = InlineKeyboardBuilder()
     builder.button(
         text="📦 Замовлення",
         callback_data="admin_orders_menu"
     )
+    # <-- Додано нову кнопку
+    builder.button(
+        text="🔗 Клавіатура під пост",
+        callback_data="admin_generate_deeplinks"
+    )
+    builder.adjust(1)  # Розташовуємо кнопки у стовпчик
     return builder.as_markup()
 
 

@@ -472,65 +472,29 @@ class OrderManager:
             all_items_formatted_text = []
 
             if cart_items:
-                for article_code, quantity_in_cart in cart_items.items():
-                    logger.debug(f"User {user_id}: Processing article {article_code} from cart.")
-                    try:
-                        product_details = await self.product_manager.get_product_details(article_code)
-                    except Exception as e_pm:
-                        logger.error(
-                            f"User {user_id}: EXCEPTION in self.product_manager.get_product_details for article {article_code}: {e_pm}",
-                            exc_info=True)
-                        all_items_formatted_text.append(f"📦 Помилка завантаження деталей для артикулу {article_code}.")
-                        continue  # Переходим к следующему товару
-
-                    if not product_details:
-                        logger.warning(f"User {user_id}: No product details found for article {article_code}.")
-                        all_items_formatted_text.append(
-                            f"📦 Інформація про товар з артикулом {article_code} не знайдена.")
+                # ВИПРАВЛЕНО: Ітерація по штрих-кодах
+                for barcode, quantity_in_cart in cart_items.items():
+                    # ВИПРАВЛЕНО: Пошук по штрих-коду
+                    product_info = await self.product_manager.get_product_info_by_barcode(barcode)
+                    if not product_info:
+                        logger.warning(f"User {user_id}: No product details found for barcode {barcode}.")
+                        all_items_formatted_text.append(f"📦 Інформація про товар зі штрих-кодом {barcode} не знайдена.")
                         continue
 
-                    logger.debug(f"User {user_id}: Product details for {article_code}: {product_details}")
+                    name, price, available, article = product_info
+
                     item_text_parts = []
-                    try:  # Добавляем try-except вокруг доступа к ключам product_details
-                        item_text_parts.append(f"📦 {product_details['name']}")
-                        item_text_parts.append(f"Артикул: {product_details['article']}")
-                        item_text_parts.append(f"💰 Ціна: {product_details['price']:.2f} грн.")
-
-                        specifications = product_details.get("specifications", [])
-                        if specifications:
-                            displayable_specs = [s for s in specifications if s.get("specification")]
-                            if displayable_specs:
-                                item_text_parts.append("\n🗂 Розміри/кольори:")
-                                for spec in displayable_specs:
-                                    spec_name = spec.get('specification', 'N/A')
-                                    spec_qty = spec.get('quantity', 0)
-                                    item_text_parts.append(f"  🔘 {spec_name}")
-                                    item_text_parts.append(f"  📊 В наявності: {int(spec_qty)} шт.")
-                                    item_text_parts.append("")
-                            elif len(specifications) == 1 and not specifications[0].get("specification"):
-                                spec_qty = specifications[0].get('quantity', 0)
-                                item_text_parts.append(f"📊 Загалом в наявності: {int(spec_qty)} шт.")
-                    except KeyError as ke:
-                        logger.error(
-                            f"User {user_id}: KeyError accessing product_details for article {article_code} - Missing key: {ke}. Details: {product_details}",
-                            exc_info=True)
-                        all_items_formatted_text.append(f"📦 Помилка в структурі даних для артикулу {article_code}.")
-                        continue
-                    except Exception as e_format:
-                        logger.error(
-                            f"User {user_id}: Exception formatting item details for article {article_code}: {e_format}. Details: {product_details}",
-                            exc_info=True)
-                        all_items_formatted_text.append(f"📦 Помилка форматування деталей для артикулу {article_code}.")
-                        continue
+                    item_text_parts.append(f"📦 {name}")
+                    item_text_parts.append(f"Артикул: {article}")
+                    item_text_parts.append(f"Штрих-код: {barcode}")
+                    item_text_parts.append(f"💰 Ціна: {price:.2f} грн.")
+                    item_text_parts.append(f"📊 В наявності: {int(available)} шт.")
 
                     all_items_formatted_text.append("\n".join(item_text_parts))
 
-                if all_items_formatted_text:
-                    items_display_section = "\n\n".join(all_items_formatted_text)
-                    header_text = "Ваші товари (для уточнення у коментарі):"
-                    final_items_text_for_prompt = f"{header_text}\n{items_display_section}"
-                else:  # Если после цикла список пуст (например, все товары не найдены или с ошибками)
-                    final_items_text_for_prompt = "Не вдалося завантажити деталі для товарів у кошику."
+                items_display_section = "\n\n".join(all_items_formatted_text)
+                header_text = "Ваші товари (для уточнення у коментарі):"
+                final_items_text_for_prompt = f"{header_text}\n{items_display_section}"
             else:
                 final_items_text_for_prompt = "Ваш кошик порожній."
 
@@ -865,7 +829,7 @@ class OrderManager:
                 logger.info(f"Creating order in database for user {user_id}")
                 order = await create_order(
                     tg_id=user_id,
-                    articles=cart_items,
+                    items=cart_items,
                     name=data['name'],
                     phone=data['phone'],
                     delivery=delivery_method,
@@ -995,7 +959,7 @@ async def show_order_details(callback: CallbackQuery):
     product_manager_instance = ProductManager()
 
     try:
-        articles_dict = json.loads(order.articles)
+        items_dict = json.loads(order.articles)
     except json.JSONDecodeError:
         logger.error(f"Failed to parse articles JSON for order {order.id}: {order.articles}")
         await callback.message.edit_text(
@@ -1006,10 +970,12 @@ async def show_order_details(callback: CallbackQuery):
         return
 
     items_text_list = []
-    for article_code, quantity in articles_dict.items():
-        product_info = product_manager_instance.get_product_info(article_code)
-        product_name = product_info[0] if product_info else f"Артикул {article_code}"
-        items_text_list.append(f"- {product_name} (Арт: {article_code}): {quantity} шт.")
+    for barcode, quantity in items_dict.items():
+        # ВИПРАВЛЕНО: Пошук по штрих-коду
+        product_info = await product_manager_instance.get_product_info_by_barcode(barcode)
+        product_name = product_info[0] if product_info else f"Штрих-код {barcode}"
+        article = product_info[3] if product_info else "N/A"
+        items_text_list.append(f"- {product_name} (Арт: {article}): {quantity} шт.")
 
     items_text = "\n".join(items_text_list) if items_text_list else "Інформація про товари відсутня."
 

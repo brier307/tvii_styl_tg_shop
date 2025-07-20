@@ -1,6 +1,7 @@
 import json
+import re
 from math import ceil
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Filter, CommandStart, Command
@@ -10,10 +11,12 @@ from app.database.products import ProductManager
 from app.database.models import OrderStatus
 from app.states import AdminOrderStates
 from config import ADMIN
-
+import logging
 
 admin = Router()
 ORDERS_PER_PAGE = 10  # Кількість замовлень на одній сторінці
+
+logger = logging.getLogger(__name__)
 
 
 class Admin(Filter):
@@ -413,7 +416,7 @@ async def show_admin_order_details(callback: CallbackQuery):
     product_manager_instance = ProductManager()
 
     try:
-        articles_dict = json.loads(order.articles)
+        items_dict = json.loads(order.articles)
     except json.JSONDecodeError:
         # Логування помилки
         await callback.message.edit_text(
@@ -424,10 +427,12 @@ async def show_admin_order_details(callback: CallbackQuery):
         return
 
     items_text_list = []
-    for article_code, quantity in articles_dict.items():
-        product_info = await product_manager_instance.get_product_info(article_code)
-        product_name = product_info[0] if product_info else f"Артикул {article_code}"
-        items_text_list.append(f"- {product_name} (Арт: {article_code}): {quantity} шт.")
+    for barcode, quantity in items_dict.items():
+        # ВИПРАВЛЕНО: Пошук по штрих-коду
+        product_info = await product_manager_instance.get_product_info_by_barcode(barcode)
+        product_name = product_info[0] if product_info else f"Штрих-код {barcode}"
+        article = product_info[3] if product_info else "N/A"  # Отримуємо артикул для відображення
+        items_text_list.append(f"- {product_name} (Арт: {article}, ШК: {barcode}): {quantity} шт.")
 
     items_text = "\n".join(items_text_list) if items_text_list else "Інформація про товари відсутня."
 
@@ -446,8 +451,6 @@ async def show_admin_order_details(callback: CallbackQuery):
     if order.tracking_number:
         order_details_message += f"🔢 <b>Номер відправлення:</b> {order.tracking_number}\n"
 
-    order_details_message += f"\n💳 <b>Спосіб оплати:</b> {order.payment_method}\n"
-    order_details_message += f"🚚 <b>Доставка:</b> {order.delivery}\n"
 
     order_details_message += f"\n💳 <b>Спосіб оплати:</b> {order.payment_method}\n"
     order_details_message += f"🚚 <b>Доставка:</b> {order.delivery}\n"
@@ -605,3 +608,75 @@ async def process_tracking_number(message: Message, state: FSMContext):
         await message.answer(f"⚠️ Відбулася помилка: {str(e)}")
     finally:
         await state.clear()
+
+
+@admin.callback_query(F.data == "admin_generate_deeplinks")
+async def ask_for_article(callback: CallbackQuery, state: FSMContext):
+    """Запитує у адміністратора артикул для генерації посилань."""
+    await state.set_state(AdminOrderStates.GenerateDeeplink)
+    await callback.message.edit_text(
+        "Будь ласка, надішліть артикул товару, для якого потрібно згенерувати посилання.",
+        reply_markup=get_back_to_main_menu()
+    )
+    await callback.answer()
+
+
+@admin.message(AdminOrderStates.GenerateDeeplink, F.text)
+async def generate_deeplinks(message: Message, state: FSMContext, bot: Bot):
+    """Генерує та відправляє діплінки для зазначеного артикулу."""
+    await state.clear()
+    article = message.text.strip()
+
+    product_manager = ProductManager()
+    barcodes_info = await product_manager.get_barcodes_by_article(article)
+
+    if not barcodes_info:
+        await message.answer(
+            f"❌ Товар з артикулом `{article}` не знайдено або для нього не вказані штрих-коди.",
+            parse_mode="Markdown",
+            reply_markup=get_admin_main_menu()
+        )
+        return
+
+    try:
+        me = await bot.get_me()
+        bot_username = me.username
+
+        deeplinks = []
+        # ВИПРАВЛЕНО: Використання лічильника замість назви товару
+        size_counter = 1
+        for barcode, name in barcodes_info:
+            link = f"https://t.me/{bot_username}?start={barcode}"
+            # Формуємо рядок "Розмір 1", "Розмір 2" і т.д.
+            deeplinks.append(f"Розмір {size_counter} - {link}")
+            size_counter += 1
+
+        # Формуємо повідомлення, яке легко скопіювати
+        final_links_str = "\n".join(deeplinks)
+        response_text = f"Посилання для артикулу `{article}`:\n\n`{final_links_str}`"
+
+
+        await message.answer(
+            response_text,
+            parse_mode="Markdown",
+            )
+
+        await message.answer(
+            "Головне меню адміністратора:",
+            reply_markup=get_admin_main_menu()
+        )
+
+    except Exception as e:
+        logger.error(f"Помилка під час генерації діплінків: {e}", exc_info=True)
+        await message.answer("❌ Сталася помилка під час генерації посилань.")
+
+
+# Обробник для кнопки "Назад" зі стану генерації
+@admin.callback_query(AdminOrderStates.GenerateDeeplink, F.data == "admin_main_menu")
+async def back_to_main_menu_from_deeplink(callback: CallbackQuery, state: FSMContext):
+    """Обробляє повернення до головного меню зі стану генерації діплінків."""
+    await state.clear()
+    await callback.message.edit_text(
+        "Головне меню адміністратора:"
+    )
+    await callback.answer()
